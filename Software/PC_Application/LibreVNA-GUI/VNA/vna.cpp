@@ -581,6 +581,18 @@ VNA::VNA(AppWindow *window, QString name)
     window->addDockWidget(Qt::LeftDockWidgetArea, tracesDock);
     docks.insert(tracesDock);
 
+    auto importAction = new QAction("Touchstone/CSV");
+    connect(importAction, &QAction::triggered, traceWidget, &TraceWidgetVNA::importDialog);
+    importActions.push_back(importAction);
+
+    auto exportTouchstone = new QAction("Touchstone");
+    connect(exportTouchstone, &QAction::triggered, traceWidget, &TraceWidgetVNA::exportTouchstone);
+    exportActions.push_back(exportTouchstone);
+
+    auto exportCSV = new QAction("CSV");
+    connect(exportCSV, &QAction::triggered, traceWidget, &TraceWidgetVNA::exportCSV);
+    exportActions.push_back(exportCSV);
+
 
     auto markerWidget = new MarkerWidget(*markerModel);
 
@@ -904,6 +916,8 @@ void VNA::NewDatapoint(DeviceDriver::VNAMeasurement m)
         lastStart = now;
         qDebug() << "Sweep took"<<sweepTime<<"milliseconds";
     }
+
+    emit newRawDatapoint(m);
 
     if(singleSweep && average.getLevel() == averages) {
         Stop();
@@ -1455,6 +1469,21 @@ void VNA::SetupSCPI()
         }
     }, [=](QStringList) -> QString {
         return QString::number(settings.Power.stop);
+    }));
+    SCPINode::add(new SCPICommand("SWEEPTYPE", [=](QStringList params) -> QString {
+        if(params.size() >= 1) {
+            if(params[0] == "LIN") {
+                SetLogSweep(false);
+                return SCPI::getResultName(SCPI::Result::Empty);
+            } else if(params[0] == "LOG") {
+                SetLogSweep(true);
+                return SCPI::getResultName(SCPI::Result::Empty);
+            }
+        }
+        // either no parameter or invalid
+        return SCPI::getResultName(SCPI::Result::Error);
+    }, [=](QStringList) -> QString {
+        return settings.Freq.logSweep ? "LOG" : "LIN";
     }));
     auto scpi_acq = new SCPINode("ACQuisition");
     SCPINode::add(scpi_acq);
