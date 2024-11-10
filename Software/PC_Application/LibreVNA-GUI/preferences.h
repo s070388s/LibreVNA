@@ -7,6 +7,7 @@
 #include "Device/LibreVNA/Compound/compounddevice.h"
 
 #include <QDialog>
+#include <QFileDialog>
 #include <QVariant>
 #include <exception>
 
@@ -60,6 +61,8 @@ public:
     void setDefault(std::vector<Savable::SettingDescription> descr);
 
     void manualTCPport() { TCPoverride = true; }
+
+    static QFileDialog::Options QFileDialogOptions(QFileDialog::Options option = (QFileDialog::Options) 0x00000000);
 
     struct {
         bool ConnectToFirstDevice;
@@ -126,6 +129,7 @@ public:
         } Color;
         GraphDomainChangeBehavior domainChangeBehavior;
         GraphLimitIndication limitIndication;
+        bool limitNaNpasses;
 
         double lineWidth;
         int fontSizeAxis;
@@ -190,6 +194,7 @@ public:
     struct {
         double USBlogSizeLimit;
         bool saveTraceData;
+        bool useNativeDialogs;
     } Debug;
 
     bool TCPoverride; // in case of manual port specification via command line
@@ -253,6 +258,7 @@ private:
         {&Graphs.Color.Ticks.divisions, "Graphs.Color.Ticks.divisions", QColor(Qt::gray)},
         {&Graphs.domainChangeBehavior, "Graphs.domainChangeBehavior", GraphDomainChangeBehavior::AdjustGraphs},
         {&Graphs.limitIndication, "Graphs.limitIndication", GraphLimitIndication::PassFailText},
+        {&Graphs.limitNaNpasses, "Graphs.limitNaNpasses", false},
         {&Graphs.lineWidth, "Graphs.lineWidth", 1.0},
         {&Graphs.fontSizeAxis, "Graphs.fontSizeAxis", 10},
         {&Graphs.fontSizeCursorOverlay, "Graphs.fontSizeCursorOverlay", 12},
@@ -310,6 +316,7 @@ private:
         {&StreamingServers.SANormalizedData.port, "StreamingServers.SANormalizedData.port", 19101},
         {&Debug.USBlogSizeLimit, "Debug.USBlogSizeLimit", 10000000.0},
         {&Debug.saveTraceData, "Debug.saveTraceData", false},
+        {&Debug.useNativeDialogs, "Debug.useNativeDialogs", true},
     }};
 };
 

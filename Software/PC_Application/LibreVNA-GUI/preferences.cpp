@@ -68,7 +68,7 @@ PreferencesDialog::PreferencesDialog(Preferences *pref, QWidget *parent) :
        ui->StartupStack->setCurrentWidget(ui->StartupPageSetupFile);
     });
     connect(ui->StartupBrowse, &QPushButton::clicked, [=](){
-       ui->StartupSetupFile->setText(QFileDialog::getOpenFileName(nullptr, "Select startup setup file", "", "Setup files (*.setup)", nullptr, QFileDialog::DontUseNativeDialog));
+       ui->StartupSetupFile->setText(QFileDialog::getOpenFileName(nullptr, "Select startup setup file", "", "Setup files (*.setup)", nullptr, Preferences::QFileDialogOptions()));
     });
     ui->StartupSweepStart->setUnit("Hz");
     ui->StartupSweepStart->setPrefixes(" kMG");
@@ -186,7 +186,7 @@ PreferencesDialog::PreferencesDialog(Preferences *pref, QWidget *parent) :
         updateFromGUI();
     });
     connect(ui->buttonBox->button(QDialogButtonBox::Save), &QPushButton::clicked, [=](){
-        auto filename = QFileDialog::getSaveFileName(this, "Save preferences", "", "LibreVNA preferences files (*.vnapref)", nullptr, QFileDialog::DontUseNativeDialog);
+        auto filename = QFileDialog::getSaveFileName(this, "Save preferences", "", "LibreVNA preferences files (*.vnapref)", nullptr, Preferences::QFileDialogOptions());
         if(filename.length() > 0) {
            if(!filename.toLower().endsWith(".vnapref")) {
                filename.append(".vnapref");
@@ -199,7 +199,7 @@ PreferencesDialog::PreferencesDialog(Preferences *pref, QWidget *parent) :
         }
     });
     connect(ui->buttonBox->button(QDialogButtonBox::Open), &QPushButton::clicked, [=](){
-        auto filename = QFileDialog::getOpenFileName(this, "Load preferences", "", "LibreVNA preferences files (*.vnapref)", nullptr, QFileDialog::DontUseNativeDialog);
+        auto filename = QFileDialog::getOpenFileName(this, "Load preferences", "", "LibreVNA preferences files (*.vnapref)", nullptr, Preferences::QFileDialogOptions());
         if(filename.length() > 0) {
            ifstream file;
            file.open(filename.toStdString());
@@ -274,6 +274,7 @@ void PreferencesDialog::setInitialGUIState()
     ui->GraphsColorTicksBackground->setColor(p->Graphs.Color.Ticks.Background.background);
     ui->GraphsDomainChangeBehavior->setCurrentIndex((int) p->Graphs.domainChangeBehavior);
     ui->GraphsLimitIndication->setCurrentIndex((int) p->Graphs.limitIndication);
+    ui->GraphsLimitNaNpasses->setCurrentIndex(p->Graphs.limitNaNpasses ? 1 : 0);
     ui->GraphsLineWidth->setValue(p->Graphs.lineWidth);
     ui->GraphsFontSizeAxis->setValue(p->Graphs.fontSizeAxis);
     ui->GraphsFontSizeCursorOverlay->setValue(p->Graphs.fontSizeCursorOverlay);
@@ -334,6 +335,7 @@ void PreferencesDialog::setInitialGUIState()
 
     ui->DebugMaxUSBlogSize->setValue(p->Debug.USBlogSizeLimit);
     ui->DebugSaveTraceData->setChecked(p->Debug.saveTraceData);
+    ui->DebugUseNativeDialogs->setChecked(p->Debug.useNativeDialogs);
 
     QTreeWidgetItem *item = ui->treeWidget->topLevelItem(0);
     if (item != nullptr) {
@@ -387,6 +389,7 @@ void PreferencesDialog::updateFromGUI()
     p->Graphs.Color.Ticks.divisions = ui->GraphsColorTicksDivisions->getColor();
     p->Graphs.domainChangeBehavior = (GraphDomainChangeBehavior) ui->GraphsDomainChangeBehavior->currentIndex();
     p->Graphs.limitIndication = (GraphLimitIndication) ui->GraphsLimitIndication->currentIndex();
+    p->Graphs.limitNaNpasses = ui->GraphsLimitNaNpasses->currentIndex() == 1;
     p->Graphs.lineWidth = ui->GraphsLineWidth->value();
     p->Graphs.fontSizeAxis = ui->GraphsFontSizeAxis->value();
     p->Graphs.fontSizeCursorOverlay = ui->GraphsFontSizeCursorOverlay->value();
@@ -446,6 +449,7 @@ void PreferencesDialog::updateFromGUI()
 
     p->Debug.USBlogSizeLimit = ui->DebugMaxUSBlogSize->value();
     p->Debug.saveTraceData = ui->DebugSaveTraceData->isChecked();
+    p->Debug.useNativeDialogs = ui->DebugUseNativeDialogs->isChecked();
 
     p->nonTrivialWriting();
 }
@@ -520,6 +524,14 @@ void Preferences::setDefault(std::vector<Savable::SettingDescription> descr)
     for(auto d : descr) {
         d.var.setValue(d.def);
     }
+}
+
+QFileDialog::Options Preferences::QFileDialogOptions(QFileDialog::Options option)
+{
+    if(!instance.Debug.useNativeDialogs) {
+        option = (QFileDialog::Option) ((int) option | QFileDialog::DontUseNativeDialog);
+    }
+    return option;
 }
 
 void Preferences::fromJSON(nlohmann::json j)

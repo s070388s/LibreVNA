@@ -4,7 +4,6 @@
 #include "librevnadriver.h"
 #include "Util/usbinbuffer.h"
 
-#include <libusb-1.0/libusb.h>
 #include <thread>
 
 #include <QQueue>

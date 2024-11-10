@@ -3,7 +3,6 @@
 
 #include "Util/usbinbuffer.h"
 
-#include <libusb-1.0/libusb.h>
 #include <QString>
 #include <set>
 #include <functional>

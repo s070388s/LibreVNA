@@ -228,7 +228,7 @@ VNA::VNA(AppWindow *window, QString name)
        if(window->getDevice()) {
            auto key = "DefaultCalibration"+window->getDevice()->getSerial();
            QSettings settings;
-           auto filename = QFileDialog::getOpenFileName(nullptr, "Load calibration data", settings.value(key).toString(), "Calibration files (*.cal)", nullptr, QFileDialog::DontUseNativeDialog);
+           auto filename = QFileDialog::getOpenFileName(nullptr, "Load calibration data", settings.value(key).toString(), "Calibration files (*.cal)", nullptr, Preferences::QFileDialogOptions());
            if(!filename.isEmpty()) {
                settings.setValue(key, filename);
                removeDefaultCal->setEnabled(true);
@@ -646,7 +646,7 @@ VNA::VNA(AppWindow *window, QString name)
 
 Calibration::InterpolationType VNA::getCalInterpolation()
 {
-    double f_min, f_max;
+    double f_min = 0, f_max = 0;
     switch(settings.sweepType) {
     case SweepType::Last:
         // should never get here, use frequency values just in case
@@ -976,7 +976,7 @@ void VNA::NewDatapoint(DeviceDriver::VNAMeasurement m)
         window->addStreamingData(m_avg, AppWindow::VNADataType::Calibrated);
     }
 
-    TraceMath::DataType type;
+    TraceMath::DataType type = TraceMath::DataType::Frequency;
     if(settings.zerospan) {
         type = TraceMath::DataType::TimeZeroSpan;
 
