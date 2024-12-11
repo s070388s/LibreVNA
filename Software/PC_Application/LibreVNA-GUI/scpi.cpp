@@ -3,7 +3,9 @@
 #include <QDebug>
 
 SCPI::SCPI() :
-    SCPINode("")
+    SCPINode(""),
+    semQueue(QSemaphore(1)),
+    semProcessing(QSemaphore(1))
 {
     WAIexecuting = false;
     OPCsetBitScheduled = false;
@@ -11,6 +13,7 @@ SCPI::SCPI() :
     OCAS = false;
     SESR = 0x00;
     ESE = 0xFF;
+    processing = false;
 
     add(new SCPICommand("*CLS", [=](QStringList) {
         SESR = 0x00;
@@ -177,15 +180,26 @@ QString SCPI::getResultName(SCPI::Result r)
 
 void SCPI::input(QString line)
 {
+    semQueue.acquire();
     cmdQueue.append(line);
-    process();
+    semQueue.release();
+    if(semProcessing.available()) {
+        process();
+    }
 }
 
 void SCPI::process()
 {
-    while(!WAIexecuting && !cmdQueue.isEmpty()) {
+    semProcessing.acquire();
+    semQueue.acquire();
+    auto queueBuf = cmdQueue;
+    semQueue.release();
+    while(!WAIexecuting && !queueBuf.isEmpty()) {
+        semQueue.acquire();
         auto cmd = cmdQueue.front();
         cmdQueue.pop_front();
+        queueBuf = cmdQueue;
+        semQueue.release();
         auto cmds = cmd.split(";");
         SCPINode *lastNode = this;
         for(auto cmd : cmds) {
@@ -214,6 +228,7 @@ void SCPI::process()
             }
         }
     }
+    semProcessing.release();
 }
 
 void SCPI::someOperationCompleted()

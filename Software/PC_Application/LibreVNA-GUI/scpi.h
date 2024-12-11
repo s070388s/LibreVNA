@@ -3,6 +3,7 @@
 
 #include <QString>
 #include <QObject>
+#include <QSemaphore>
 #include <vector>
 #include <functional>
 
@@ -121,6 +122,9 @@ private:
     bool WAIexecuting;
 
     QList<QString> cmdQueue;
+    bool processing;
+    QSemaphore semQueue;
+    QSemaphore semProcessing;
 };
 
 #endif // SCPI_H
