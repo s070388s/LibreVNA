@@ -335,7 +335,7 @@ void Trace::fillFromDatapoints(std::map<QString, Trace *> traceSet, const std::v
                 if(!deembedded) {
                     traceSet[measurement]->addData(td, DataType::Frequency);
                 } else {
-                    traceSet[measurement]->addDeembeddingData(td);
+                    traceSet[measurement]->addDeembeddingData(td, d.Z0);
                 }
             }
         }
@@ -408,10 +408,10 @@ void Trace::setMathFormula(const QString &newMathFormula)
     scheduleMathCalculation(0, data.size());
 }
 
-bool Trace::mathFormularValid() const
+QString Trace::getMathFormulaError() const
 {
     if(mathFormula.isEmpty()) {
-        return false;
+        return "Math formula must not be empty";
     }
     try {
         ParserX parser(pckCOMMON | pckUNIT | pckCOMPLEX);
@@ -427,16 +427,19 @@ bool Trace::mathFormularValid() const
                     break;
                 }
             }
+            if(varName == "x") {
+                found = true;
+            }
             if(!found) {
-                return false;
+                return "Unknown variable: "+varName;
             }
         }
     } catch (const ParserError &e) {
         // parser error occurred
-        return false;
+        return "Parsing failed: " + QString::fromStdString(e.GetMsg());
     }
     // all variables used in the expression are set as math sources
-    return true;
+    return "";
 }
 
 bool Trace::resolveMathSourceHashes()
@@ -455,13 +458,31 @@ bool Trace::resolveMathSourceHashes()
 
 void Trace::updateMathTracePoints()
 {
+    if(paused) {
+        // do not update when paused
+        return;
+    }
     if(!mathSourceTraces.size()) {
         return;
     }
     double startX = std::numeric_limits<double>::lowest();
     double stopX = std::numeric_limits<double>::max();
     double stepSize = std::numeric_limits<double>::max();
+    auto domain = DataType::Invalid;
     for(auto t : mathSourceTraces) {
+        if(domain == DataType::Invalid) {
+            domain = t.first->outputType();
+        } else {
+            if(domain != t.first->outputType()) {
+                // not all traces have the same domain, clear output and do not calculate
+                data.resize(0);
+                mathUpdateBegin = 0;
+                mathUpdateEnd = 0;
+                dataType = DataType::Invalid;
+                emit outputTypeChanged(dataType);
+                return;
+            }
+        }
         if(t.first->minX() > startX) {
             startX = t.first->minX();
         }
@@ -476,7 +497,14 @@ void Trace::updateMathTracePoints()
             stepSize = traceStepSize;
         }
     }
-    unsigned int samples = round((stopX - startX) / stepSize + 1);
+    if(domain != this->domain) {
+        this->domain = domain;
+        emit typeChanged(this);
+    }
+    unsigned int samples = 0;
+    if(stopX > startX) {
+        samples = round((stopX - startX) / stepSize + 1);
+    }
 //    qDebug() << "Updated trace points, now"<<samples<<"points from"<<startX<<"to"<<stopX;
     if(samples != data.size()) {
         auto oldSize = data.size();
@@ -526,6 +554,10 @@ void Trace::scheduleMathCalculation(unsigned int begin, unsigned int end)
 void Trace::calculateMath()
 {
     lastMathUpdate = QTime::currentTime();
+    if(mathUpdateEnd <= mathUpdateBegin) {
+        // nothing to do
+        return;
+    }
     if(mathUpdateBegin >= data.size() || mathUpdateEnd >= data.size() + 1) {
         qWarning() << "Not calculating math trace, out of limits. Requested from" << mathUpdateBegin << "to" << mathUpdateEnd <<" but data is of size" << data.size();
         return;
@@ -635,6 +667,11 @@ bool Trace::canAddAsMathSource(Trace *t)
 
 bool Trace::addMathSource(Trace *t, QString variableName)
 {
+    if(mathSourceTraces.count(t)) {
+        // this trace is already used as a math source
+        mathSourceTraces[t] = variableName;
+        return true;
+    }
 //    qDebug() << "Adding trace" << t << "as a math source to" << this << "as variable" << variableName;
     if(!canAddAsMathSource(t)) {
         return false;
@@ -1354,19 +1391,19 @@ void Trace::clearDeembedding()
 
 double Trace::minX()
 {
-    if(lastMath->numSamples() > 0) {
-        return lastMath->rData().front().x;
+    if(lastMath == this) {
+        return TraceMath::minX();
     } else {
-        return numeric_limits<double>::max();
+        return lastMath->minX();
     }
 }
 
 double Trace::maxX()
 {
-    if(lastMath->numSamples() > 0) {
-        return lastMath->rData().back().x;
+    if(lastMath == this) {
+        return TraceMath::maxX();
     } else {
-        return numeric_limits<double>::lowest();
+        return lastMath->maxX();
     }
 }
 
@@ -1374,7 +1411,7 @@ double Trace::findExtremum(bool max, double xmin, double xmax)
 {
     double compare = max ? numeric_limits<double>::min() : numeric_limits<double>::max();
     double freq = 0.0;
-    for(auto sample : lastMath->rData()) {
+    for(auto sample : lastMath->getData()) {
         if(sample.x < xmin || sample.x > xmax) {
             continue;
         }
@@ -1390,7 +1427,7 @@ double Trace::findExtremum(bool max, double xmin, double xmax)
 
 std::vector<double> Trace::findPeakFrequencies(unsigned int maxPeaks, double minLevel, double minValley, double xmin, double xmax, bool negativePeaks)
 {
-    if(lastMath->getDataType() != DataType::Frequency) {
+    if(outputType() != DataType::Frequency) {
         // not in frequency domain
         return vector<double>();
     }
@@ -1405,7 +1442,7 @@ std::vector<double> Trace::findPeakFrequencies(unsigned int maxPeaks, double min
     double frequency = 0.0;
     double max_dbm = -200.0;
     double min_dbm = 200.0;
-    for(auto d : lastMath->rData()) {
+    for(auto d : lastMath->getData()) {
         if(d.x < xmin || d.x > xmax) {
             continue;
         }
@@ -1517,12 +1554,12 @@ unsigned int Trace::numSamples()
     }
 }
 
-std::vector<Trace::Data> &Trace::rData()
+std::vector<Trace::Data> Trace::getData()
 {
     if(deembeddingActive && deembeddingAvailable()) {
         return deembeddingData;
     } else {
-        return TraceMath::rData();
+        return TraceMath::getData();
     }
 }
 
@@ -1565,7 +1602,7 @@ unsigned int Trace::getFileParameter() const
 
 double Trace::getNoise(double frequency)
 {
-    if(source != Trace::Source::Live || !settings.valid || !liveParam.startsWith("PORT") || lastMath->getDataType() != DataType::Frequency) {
+    if(source != Trace::Source::Live || !settings.valid || !liveParam.startsWith("PORT") || outputType() != DataType::Frequency) {
         // data not suitable for noise calculation
         return std::numeric_limits<double>::quiet_NaN();
     }
@@ -1620,12 +1657,16 @@ double Trace::getGroupDelay(double frequency)
 
 int Trace::index(double x)
 {
-    auto lower = lower_bound(lastMath->rData().begin(), lastMath->rData().end(), x, [](const Data &lhs, const double x) -> bool {
+    int ret;
+    lastMath->dataMutex.lock();
+    auto lower = lower_bound(lastMath->data.begin(), lastMath->data.end(), x, [](const Data &lhs, const double x) -> bool {
         return lhs.x < x;
     });
-    if(lower == lastMath->rData().end()) {
+    if(lower == lastMath->data.end()) {
         // actually beyond the last sample, return the index of the last anyway to avoid access past data
-        return lastMath->rData().size() - 1;
+        ret = lastMath->data.size() - 1;
     }
-    return lower - lastMath->rData().begin();
+    ret = lower - lastMath->data.begin();
+    lastMath->dataMutex.unlock();
+    return ret;
 }

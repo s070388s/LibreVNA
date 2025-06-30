@@ -15,6 +15,7 @@ Math::Expression::Expression()
 {
     parser = new ParserX(pckCOMMON | pckUNIT | pckCOMPLEX);
     parser->DefineVar("x", Variable(&x));
+    dataType = DataType::Invalid;
     expressionChanged();
 }
 
@@ -37,10 +38,8 @@ void Math::Expression::edit()
 {
     auto d = new QDialog();
     auto ui = new Ui::ExpressionDialog;
+    d->setAttribute(Qt::WA_DeleteOnClose);
     ui->setupUi(d);
-    connect(d, &QDialog::finished, [=](){
-        delete ui;
-    });
     ui->expEdit->setText(exp);
     connect(ui->buttonBox, &QDialogButtonBox::accepted, [=](){
         exp = ui->expEdit->text();
@@ -85,8 +84,20 @@ void Math::Expression::fromJSON(nlohmann::json j)
 
 void Math::Expression::inputSamplesChanged(unsigned int begin, unsigned int end)
 {
-    auto in = input->rData();
+    std::vector<Data> in;
+    if(input) {
+        in = input->getData();
+    }
+    dataMutex.lock();
     data.resize(in.size());
+    // sanity check input values
+    if(end > 0 && end > in.size()) {
+        end = in.size();
+    }
+    if(end <= begin) {
+        dataMutex.unlock();
+        return;
+    }
     try {
         for(unsigned int i=begin;i<end;i++) {
             t = in[i].x;
@@ -100,10 +111,19 @@ void Math::Expression::inputSamplesChanged(unsigned int begin, unsigned int end)
             data[i].y = res.GetComplex();
         }
         success();
-        emit outputSamplesChanged(begin, end);
     } catch (const ParserError &e) {
         error(QString::fromStdString(e.GetMsg()));
     }
+    dataMutex.unlock();
+    emit outputSamplesChanged(begin, end);
+}
+
+void Math::Expression::inputTypeChanged(DataType type)
+{
+    // call base class slot
+    TraceMath::inputTypeChanged(type);
+    // we need to evaluate the expression again to create the correct variables
+    expressionChanged();
 }
 
 void Math::Expression::expressionChanged()
@@ -137,6 +157,6 @@ void Math::Expression::expressionChanged()
         break;
     }
     if(input) {
-        inputSamplesChanged(0, input->rData().size());
+        inputSamplesChanged(0, input->numSamples());
     }
 }

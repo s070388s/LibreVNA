@@ -3,6 +3,8 @@
 
 #include "Util/qpointervariant.h"
 #include "savable.h"
+#include "Traces/traceaxis.h"
+#include "CustomWidgets/siunitedit.h"
 
 #include "Device/LibreVNA/Compound/compounddevice.h"
 
@@ -44,7 +46,8 @@ enum MarkerSymbolStyle {
 Q_DECLARE_METATYPE(MarkerSymbolStyle);
 
 
-class Preferences : public Savable {
+class Preferences : public QObject, public Savable {
+    Q_OBJECT
     friend class PreferencesDialog;
 public:
     static Preferences& getInstance() {
@@ -84,6 +87,7 @@ public:
             int points;
             double bandwidth;
             int averaging;
+            double dwellTime;
         } DefaultSweep;
         struct {
             double frequency;
@@ -99,8 +103,11 @@ public:
         } SA;
     } Startup;
     struct {
+        // VNA settings
         bool alwaysExciteAllPorts;
         bool allowSegmentedSweep;
+        bool allowUseOfUnstableLibreCALTemp;
+
         bool useMedianAveraging;
 
         // Full span settings
@@ -132,6 +139,7 @@ public:
         bool limitNaNpasses;
 
         double lineWidth;
+        int fontSizeTitle;
         int fontSizeAxis;
         int fontSizeMarkerData;
         int fontSizeTraceNames;
@@ -154,6 +162,11 @@ public:
             QString transmission;
             QString reflection;
         } defaultGraphs;
+
+        struct {
+            double min[(int) YAxis::Type::Last];
+            double max[(int) YAxis::Type::Last];
+        } defaultAxisLimits;
     } Graphs;
     struct {
         struct {
@@ -164,6 +177,7 @@ public:
         bool interpolatePoints;
         MarkerSortOrder sortOrder;
         MarkerSymbolStyle symbolStyle;
+        bool clipToYAxis;
     } Marker;
     struct {
         bool enabled;
@@ -196,6 +210,26 @@ public:
         bool saveTraceData;
         bool useNativeDialogs;
     } Debug;
+    struct {
+        struct {
+            unsigned int ports;
+            unsigned int formatIndex;
+            unsigned int unitIndex;
+            QString exportedTraceNames;
+        } TouchstoneExport;
+        struct {
+            QString setup;
+            QString cal;
+            QString calkit;
+            QString data;
+            QString image;
+            QString vnacaldata;
+            QString packetlog;
+            QString limitLines;
+            QString pref;
+            QString firmware;
+        } Paths;
+    } UISettings;
 
     bool TCPoverride; // in case of manual port specification via command line
 
@@ -204,6 +238,9 @@ public:
 
     bool set(QString name, QVariant value);
     QVariant get(QString name);
+
+signals:
+    void updated();
 
 private:
     Preferences() :
@@ -232,6 +269,7 @@ private:
         {&Startup.DefaultSweep.points, "Startup.DefaultSweep.points", 501},
         {&Startup.DefaultSweep.bandwidth, "Startup.DefaultSweep.bandwidth", 1000.0},
         {&Startup.DefaultSweep.averaging, "Startup.DefaultSweep.averaging", 1},
+        {&Startup.DefaultSweep.dwellTime, "Startup.DefaultSweep.dwellTime", 0.0},
         {&Startup.Generator.frequency, "Startup.Generator.frequency", 1000000000.0},
         {&Startup.Generator.level, "Startup.Generator.level", -10.00},
         {&Startup.SA.start, "Startup.SA.start", 950000000.0},
@@ -242,6 +280,7 @@ private:
         {&Startup.SA.averaging, "Startup.SA.averaging", 1},
         {&Acquisition.alwaysExciteAllPorts, "Acquisition.alwaysExciteBothPorts", true},
         {&Acquisition.allowSegmentedSweep, "Acquisition.allowSegmentedSweep", true},
+        {&Acquisition.allowUseOfUnstableLibreCALTemp, "Acquisition.allowUseOfUnstableLibreCALTemp", true},
         {&Acquisition.useMedianAveraging, "Acquisition.useMedianAveraging", false},
         {&Acquisition.fullSpanManual, "Acquisition.fullSpanManual", false},
         {&Acquisition.fullSpanStart, "Acquisition.fullSpanStart", 0.0},
@@ -260,6 +299,7 @@ private:
         {&Graphs.limitIndication, "Graphs.limitIndication", GraphLimitIndication::PassFailText},
         {&Graphs.limitNaNpasses, "Graphs.limitNaNpasses", false},
         {&Graphs.lineWidth, "Graphs.lineWidth", 1.0},
+        {&Graphs.fontSizeTitle, "Graphs.fontSizeTitle", 18},
         {&Graphs.fontSizeAxis, "Graphs.fontSizeAxis", 10},
         {&Graphs.fontSizeCursorOverlay, "Graphs.fontSizeCursorOverlay", 12},
         {&Graphs.fontSizeMarkerData, "Graphs.fontSizeMarkerData", 12},
@@ -274,6 +314,46 @@ private:
         {&Graphs.SweepIndicator.hidePercent, "Graphs.SweepIndicator.hidePercent", 3.0},
         {&Graphs.defaultGraphs.transmission, "Graphs.defaultGraphs.transmission", "XY Plot"},
         {&Graphs.defaultGraphs.reflection, "Graphs.defaultGraphs.reflection", "Smith Chart"},
+
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::Magnitude], "Graphs.defaultAxisLimits.Magnitude.max", 20.0},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::Magnitude], "Graphs.defaultAxisLimits.Magnitude.min", -120.0},
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::MagnitudedBuV], "Graphs.defaultAxisLimits.MagnitudedBuV.max", 128.0},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::MagnitudedBuV], "Graphs.defaultAxisLimits.MagnitudedBuV.min", -13.0},
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::MagnitudeLinear], "Graphs.defaultAxisLimits.MagnitudeLinear.max", 1.0},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::MagnitudeLinear], "Graphs.defaultAxisLimits.MagnitudeLinear.min", 0.0},
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::Phase], "Graphs.defaultAxisLimits.Phase.max",180.0},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::Phase], "Graphs.defaultAxisLimits.Phase.min", -180.0},
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::UnwrappedPhase], "Graphs.defaultAxisLimits.UnwrappedPhase.max", 0.0},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::UnwrappedPhase], "Graphs.defaultAxisLimits.UnwrappedPhase.min", -360.0},
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::VSWR], "Graphs.defaultAxisLimits.VSWR.max", 10.0},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::VSWR], "Graphs.defaultAxisLimits.VSWR.min", 1.0},
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::Real], "Graphs.defaultAxisLimits.Real.max", 1.0},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::Real], "Graphs.defaultAxisLimits.Real.min", -1.0},
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::Imaginary], "Graphs.defaultAxisLimits.Imaginary.max", 1.0},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::Imaginary], "Graphs.defaultAxisLimits.Imaginary.min", -1.0},
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::AbsImpedance], "Graphs.defaultAxisLimits.AbsImpedance.max", 100.0},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::AbsImpedance], "Graphs.defaultAxisLimits.AbsImpedance.min", 0.0},
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::SeriesR], "Graphs.defaultAxisLimits.SeriesR.max", 100.0},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::SeriesR], "Graphs.defaultAxisLimits.SeriesR.min", 0.0},
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::Reactance], "Graphs.defaultAxisLimits.Reactance.max", 100.0},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::Reactance], "Graphs.defaultAxisLimits.Reactance.min", 0.0},
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::Capacitance], "Graphs.defaultAxisLimits.Capacitance.max", 10e-6},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::Capacitance], "Graphs.defaultAxisLimits.Capacitance.min", 0},
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::Inductance], "Graphs.defaultAxisLimits.Inductance.max", 1e-3},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::Inductance], "Graphs.defaultAxisLimits.Inductance.min", 0},
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::QualityFactor], "Graphs.defaultAxisLimits.QualityFactor.max", 100.0},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::QualityFactor], "Graphs.defaultAxisLimits.QualityFactor.min", 0.0},
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::GroupDelay], "Graphs.defaultAxisLimits.GroupDelay.max", 1e-6},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::GroupDelay], "Graphs.defaultAxisLimits.GroupDelay.min", 0.0},
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::ImpulseReal], "Graphs.defaultAxisLimits.ImpulseReal.max", 1.0},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::ImpulseReal], "Graphs.defaultAxisLimits.ImpulseReal.min", -1.0},
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::ImpulseMag], "Graphs.defaultAxisLimits.ImpulseMag.max", 0.0},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::ImpulseMag], "Graphs.defaultAxisLimits.ImpulseMag.min", -100.0},
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::Step], "Graphs.defaultAxisLimits.Step.max", 1.0},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::Step], "Graphs.defaultAxisLimits.Step.min", -1.0},
+        {&Graphs.defaultAxisLimits.max[(int) YAxis::Type::Impedance], "Graphs.defaultAxisLimits.Impedance.max", 100.0},
+        {&Graphs.defaultAxisLimits.min[(int) YAxis::Type::Impedance], "Graphs.defaultAxisLimits.Impedance.min", 0.0},
+
         {&Marker.defaultBehavior.showDataOnGraphs, "Marker.defaultBehavior.ShowDataOnGraphs", true},
         {&Marker.defaultBehavior.showdB, "Marker.defaultBehavior.showdB", true},
         {&Marker.defaultBehavior.showdBm, "Marker.defaultBehavior.showdBm", true},
@@ -301,7 +381,8 @@ private:
         {&Marker.defaultBehavior.showMaxDeltaPos, "Marker.defaultBehavior.showMaxDeltaPos", true},
         {&Marker.interpolatePoints, "Marker.interpolatePoints", false},
         {&Marker.sortOrder, "Marker.sortOrder", MarkerSortOrder::PrefMarkerSortXCoord},
-        {&Marker.symbolStyle, "Marker.symbolStyle", MarkerSymbolStyle::EmptyNumberAbove},
+        {&Marker.symbolStyle, "Marker.symbolStyle", MarkerSymbolStyle::FilledNumberAbove},
+        {&Marker.clipToYAxis, "Marker.clipToYAxis", true},
         {&SCPIServer.enabled, "SCPIServer.enabled", true},
         {&SCPIServer.port, "SCPIServer.port", 19542},
         {&StreamingServers.VNARawData.enabled, "StreamingServers.VNARawData.enabled", false},
@@ -317,6 +398,21 @@ private:
         {&Debug.USBlogSizeLimit, "Debug.USBlogSizeLimit", 10000000.0},
         {&Debug.saveTraceData, "Debug.saveTraceData", false},
         {&Debug.useNativeDialogs, "Debug.useNativeDialogs", true},
+
+        {&UISettings.TouchstoneExport.ports, "UISettings.TouchstoneExport.ports", 2},
+        {&UISettings.TouchstoneExport.formatIndex, "UISettings.TouchstoneExport.formatIndex", 2},
+        {&UISettings.TouchstoneExport.unitIndex, "UISettings.TouchstoneExport.unitIndex", 3},
+        {&UISettings.TouchstoneExport.exportedTraceNames, "UISettings.TouchstoneExport.exportedTraceNames", ""},
+        {&UISettings.Paths.setup, "UISettings.Paths.setup", ""},
+        {&UISettings.Paths.cal, "UISettings.Paths.cal", ""},
+        {&UISettings.Paths.calkit, "UISettings.Paths.calkit", ""},
+        {&UISettings.Paths.data, "UISettings.Paths.data", ""},
+        {&UISettings.Paths.image, "UISettings.Paths.image", ""},
+        {&UISettings.Paths.vnacaldata, "UISettings.Paths.vnacaldata", ""},
+        {&UISettings.Paths.packetlog, "UISettings.Paths.packetlog", ""},
+        {&UISettings.Paths.limitLines, "UISettings.Paths.limitLines", ""},
+        {&UISettings.Paths.pref, "UISettings.Paths.pref", ""},
+        {&UISettings.Paths.firmware, "UISettings.Paths.firmware", ""},
     }};
 };
 
@@ -337,6 +433,8 @@ private:
     void updateFromGUI();
     Ui::PreferencesDialog *ui;
     Preferences *p;
+    std::map<YAxis::Type, SIUnitEdit*> graphAxisLimitsMaxEntries;
+    std::map<YAxis::Type, SIUnitEdit*> graphAxisLimitsMinEntries;
 };
 
 #endif // PREFERENCESDIALOG_H

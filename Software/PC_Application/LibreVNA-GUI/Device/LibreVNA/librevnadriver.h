@@ -191,6 +191,8 @@ signals:
     void receivedAnswer(const LibreVNADriver::TransmissionResult &result);
     void receivedPacket(const Protocol::PacketInfo& packet);
 
+    void receivedTrigger(LibreVNADriver *driver, bool set);
+
 protected slots:
     void handleReceivedPacket(const Protocol::PacketInfo& packet);
 protected:
@@ -212,6 +214,9 @@ protected:
     Synchronization sync;
     bool syncMaster;
 
+    bool isIdle;
+    Protocol::PacketInfo lastNonIdlePacket;
+
     std::map<int, int> portStageMapping; // maps from excitedPort (count starts at one) to stage (count starts at zero)
 
     // Driver specific settings
@@ -222,6 +227,8 @@ protected:
     double SARBWLimitForDFT;
     bool VNASuppressInvalidPeaks;
     bool VNAAdjustPowerLevel;
+
+    QDialog *manualControlDialog;
 };
 
 Q_DECLARE_METATYPE(Protocol::PacketInfo)

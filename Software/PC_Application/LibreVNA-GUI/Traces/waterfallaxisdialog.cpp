@@ -53,12 +53,14 @@ WaterfallAxisDialog::WaterfallAxisDialog(TraceWaterfall *plot) :
        ui->Wmin->setEnabled(index != 0 && !autoRange);
        ui->Wmax->setEnabled(index != 0 && !autoRange);
        auto type = (YAxis::Type) index;
-       QString unit = YAxis::Unit(type);
+       QString unit = YAxis::Unit(type, plot->getModel().getSource());
        QString prefixes = YAxis::Prefixes(type);
        ui->Wmin->setUnit(unit);
        ui->Wmin->setPrefixes(prefixes);
        ui->Wmax->setUnit(unit);
        ui->Wmax->setPrefixes(prefixes);
+       ui->Wmin->setValue(YAxis::getDefaultLimitMin(type));
+       ui->Wmax->setValue(YAxis::getDefaultLimitMax(type));
     });
     connect(ui->Wauto, &QCheckBox::toggled, [this](bool checked) {
        ui->Wmin->setEnabled(!checked);

@@ -13,6 +13,7 @@
 
 #include "Tools/parameters.h"
 #include "savable.h"
+#include "scpi.h"
 
 #include <set>
 #include <complex>
@@ -71,6 +72,7 @@ public:
         VNAPowerSweep,
         VNAZeroSpan,
         VNALogSweep,
+        VNADwellTime,
         // Generator features
         Generator,
         // Spectrum analyzer features
@@ -100,6 +102,8 @@ public:
                 unsigned int maxPoints;
                 // Stimulus level limits in dBm
                 double mindBm, maxdBm;
+                // dwell time limit
+                double maxDwellTime;
             } VNA;
             struct {
                 // Number of ports
@@ -231,6 +235,24 @@ public:
      */
     std::vector<QAction*> driverSpecificActions() {return specificActions;}
 
+    /**
+     * @brief Return driver specific SCPI commands
+     *
+     * The returned commands will be added to the :DEV SCPI node
+     *
+     * @return List of SCPI commands
+     */
+    std::vector<SCPICommand*> driverSpecificSCPICommands() {return specificSCPIcommands;}
+
+    /**
+     * @brief Return driver specific SCPI nodes
+     *
+     * The returned nodes (which may contain further nodes/commands) will be added to the :DEV SCPI node
+     *
+     * @return List of SCPI nodes
+     */
+    std::vector<SCPINode*> driverSpecificSCPINodes() {return specificSCPInodes;}
+
     class VNASettings {
     public:
         // Start/stop frequency. Both values will be identical for power sweeps and zero span
@@ -245,6 +267,8 @@ public:
         bool logSweep;
         // List of ports that should be excited during the sweep (port count starts at 1)
         std::vector<int> excitedPorts;
+        // amount of time the source stays at each point before taking measurements. Ignore if not supported
+        double dwellTime;
     };
 
     class VNAMeasurement {
@@ -272,8 +296,20 @@ public:
         // Value: complex measurement in real/imag (linear, not in dB)
         std::map<QString, std::complex<double>> measurements;
 
-        Sparam toSparam(int port1, int port2) const;
-        void fromSparam(Sparam S, int port1, int port2);
+        Sparam toSparam(int ports = 0) const;
+        /* Sets the measurement values in the VNAmeasurement (if existent) to the values from the S parameter matrix.
+         * The portMapping parameter can be used to specify which values to set from which S parameter:
+         * Example: S parameter contains 4 port S parameters, but the VNAmeasurement is 2 port only with this mapping:
+         *      VNAMeasurement port | S parameter port
+         *      --------------------|-----------------
+         *      1                   | 2
+         *      2                   | 4
+         * This means that we want S22 (from the 4 port S parameter) stored as S11 (in the VNAMeasurement).
+         * Function call for this example: fromSparam(S, {2,4})
+         *
+         * If no portMapping is specified, the port order (and mapping) from the S paramters are kept.
+         */
+        void fromSparam(Sparam S, std::vector<unsigned int> portMapping = {});
         VNAMeasurement interpolateTo(const VNAMeasurement &to, double a);
     };
 
@@ -486,6 +522,41 @@ signals:
      */
     void releaseControl();
 
+    /**
+     * @brief Emit this to temporarily add a new SCPI command to the root node.
+     *
+     * Before deleting the command, removeSCPICommand must be emitted.
+     * When the device is disconnected, all added commands will be automatically removed.
+     *
+     * @param cmd Command to add
+     */
+    void addSCPICommand(SCPICommand *cmd);
+
+    /**
+     * @brief Emit this to remove a temporarily added SCPI command.
+     *
+     * @param cmd Command to remove
+     */
+    void removeSCPICommand(SCPICommand *cmd);
+
+    /**
+     * @brief Emit this to temporarily add a new SCPI node to the root node.
+     *
+     * Before deleting the node, removeSCPINode must be emitted.
+     * When the device is disconnected, all added nodes will be automatically removed.
+     *
+     * @param node Node to add
+     */
+    void addSCPINode(SCPINode *node);
+
+    /**
+     * @brief Emit this to remove a temporarily added SCPI node.
+     *
+     * @param node Node to remove
+     */
+    void removeSCPINode(SCPINode *node);
+
+
 public:
     bool connectDevice(QString serial, bool isIndepedentDriver = false);
     void disconnectDevice();
@@ -494,8 +565,28 @@ public:
     static unsigned int SApoints();
 
 protected:
+    // Each driver implementation may add specific actionsm, settings or commands. All of these must
+    // be created in the constructor and added to the following vectors:
+
+    // A list of actions specific to the driver. They will show up in the device menu
     std::vector<QAction*> specificActions;
+
+    // A list of settings specific to the driver. They will be stored/recalled as part of the preferences.
+    // If a setting should be user-changeable in the preferences, createSettingsWidget() must include some
+    // widget to modify that setting
     std::vector<Savable::SettingDescription> specificSettings;
+
+    // A list of SCPI commands. They will be available at the root node whenever the device driver is in use.
+    // Avoid name collisions with commands/nodes already implemented in appwindow.cpp.
+    // Use this for commands that will be available whenever the device is connected. For commands that are
+    // not always available, use the addSCPICommand and removeSCPICommand signals.
+    std::vector<SCPICommand*> specificSCPIcommands;
+
+    // A list of SCPI nodes. They will be available at the root node whenever the device driver is in use.
+    // Avoid name collisions with commands/nodes already implemented in appwindow.cpp
+    // Use this for nodes that will be available whenever the device is connected. For nodes that are
+    // not always available, use the addSCPINode and removeSCPINode signals.
+    std::vector<SCPINode*> specificSCPInodes;
 
 private:
     static DeviceDriver *activeDriver;

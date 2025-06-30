@@ -4,6 +4,7 @@
 #include "caldevice.h"
 #include "usbdevice.h"
 #include "CustomWidgets/informationbox.h"
+#include "preferences.h"
 
 #include <set>
 
@@ -234,10 +235,18 @@ void LibreCALDialog::updateCalibrationStartStatus()
         canStart = validatePortSelection(true);
     }
 
+    if(canStart) {
+        if(!Preferences::getInstance().Acquisition.allowUseOfUnstableLibreCALTemp && !device->stabilized()) {
+            canStart = false;
+            ui->lCalibrationStatus->setText("LibreCAL temperature unstable");
+            ui->lCalibrationStatus->setStyleSheet("QLabel { color : red; }");
+        }
+    }
+
     ui->start->setEnabled(canStart);
     if(canStart) {
         ui->lCalibrationStatus->setText("Ready to start");
-        ui->lCalibrationStatus->setStyleSheet("QLabel { color : black; }");
+        ui->lCalibrationStatus->setStyleSheet("");
     }
 }
 
@@ -254,15 +263,17 @@ void LibreCALDialog::updateDeviceStatus()
     }
     if(device->stabilized()) {
         ui->lDeviceStatus->setText("LibreCAL ready for calibration");
-        ui->lDeviceStatus->setStyleSheet("QLabel { color : black; }");
+        ui->lDeviceStatus->setStyleSheet("");
     } else {
         ui->lDeviceStatus->setText("Heating up, please wait with calibration");
         ui->lDeviceStatus->setStyleSheet("QLabel { color : orange; }");
     }
+    updateCalibrationStartStatus();
 }
 
 void LibreCALDialog::determineAutoPorts()
 {
+    disableUI();
     ui->progressCal->setValue(0);
     ui->lCalibrationStatus->setText("Autodetecting port connections...");
     ui->lCalibrationStatus->setStyleSheet("QLabel { color : green; }");
@@ -419,10 +430,11 @@ void LibreCALDialog::stopSweep()
 void LibreCALDialog::startCalibration()
 {
     disableUI();
+    busy = true;
 
     ui->progressCal->setValue(0);
     ui->lCalibrationStatus->setText("Creating calibration kit from coefficients...");
-    ui->lCalibrationStatus->setStyleSheet("QLabel { color : black; }");
+    ui->lCalibrationStatus->setStyleSheet("");
     auto& kit = cal->getKit();
     kit.clearStandards();
     kit.manufacturer = "LibreCAL ("+coeffSet.name+")";
@@ -591,6 +603,7 @@ void LibreCALDialog::startCalibration()
                 disconnect(cal, &Calibration::measurementsUpdated, this, nullptr);
                 setTerminationOnAllUsedPorts(CalDevice::Standard(CalDevice::Standard::Type::None));
                 enableUI();
+                busy = false;
                 break;
             }
             setTerminationOnAllUsedPorts(CalDevice::Standard(CalDevice::Standard::Type::None));
@@ -606,7 +619,10 @@ void LibreCALDialog::startCalibration()
     disconnect(cal, &Calibration::measurementsUpdated, this, nullptr);
     connect(cal, &Calibration::measurementsUpdated, this, startNextCalibrationStep, Qt::QueuedConnection);
     connect(cal, &Calibration::measurementsAborted, this, [=](){
+        setTerminationOnAllUsedPorts(CalDevice::Standard(CalDevice::Standard::Type::None));
         enableUI();
+        busy = false;
+        ui->lCalibrationStatus->setText("Ready to start");
     });
 
     startNextCalibrationStep();

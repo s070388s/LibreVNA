@@ -10,7 +10,7 @@ using namespace PacketConstants;
 
 namespace Protocol {
 
-static constexpr uint16_t Version = 13;
+static constexpr uint16_t Version = 14;
 
 #pragma pack(push, 1)
 
@@ -180,6 +180,7 @@ using SweepSettings = struct _sweepSettings {
 	uint16_t unused2:1;
 
     int16_t cdbm_excitation_stop; // in 1/100 dbm
+    uint16_t dwell_time; // in us
 };
 
 using ReferenceSettings = struct _referenceSettings {
@@ -215,6 +216,7 @@ using DeviceInfo = struct _deviceInfo {
     uint8_t limits_maxAmplitudePoints;
     uint64_t limits_maxFreqHarmonic;
     uint8_t num_ports;
+    uint16_t limits_maxDwellTime;
 };
 
 using DeviceStatus = struct _deviceStatus {
@@ -437,6 +439,7 @@ using DeviceConfig = struct _deviceconfig {
 			uint32_t IF1;
 			uint8_t ADCprescaler;
 			uint16_t DFTphaseInc;
+			uint8_t PLLSettlingDelay;
 		} V1;
 		struct {
 			uint32_t ip;

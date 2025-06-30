@@ -23,7 +23,7 @@ TracePolar::TracePolar(TraceModel &model, QWidget *parent)
 
 nlohmann::json TracePolar::toJSON()
 {
-    nlohmann::json j;
+    nlohmann::json j = getBaseJSON();
     j["limit_to_span"] = limitToSpan;
     j["limit_to_edge"] = limitToEdge;
     j["edge_reflection"] = edgeReflection;
@@ -44,6 +44,7 @@ nlohmann::json TracePolar::toJSON()
 
 void TracePolar::fromJSON(nlohmann::json j)
 {
+    parseBaseJSON(j);
     limitToSpan = j.value("limit_to_span", true);
     limitToEdge = j.value("limit_to_edge", false);
     edgeReflection = j.value("edge_reflection", 1.0);
@@ -252,11 +253,12 @@ void TracePolar::updateContextMenu()
     auto image = new QAction("Save image...", contextmenu);
     contextmenu->addAction(image);
     connect(image, &QAction::triggered, [=]() {
-        auto filename = QFileDialog::getSaveFileName(nullptr, "Save plot image", "", "PNG image files (*.png)", nullptr, Preferences::QFileDialogOptions());
+        auto filename = QFileDialog::getSaveFileName(nullptr, "Save plot image", Preferences::getInstance().UISettings.Paths.image, "PNG image files (*.png)", nullptr, Preferences::QFileDialogOptions());
         if(filename.isEmpty()) {
             // aborted selection
             return;
         }
+        Preferences::getInstance().UISettings.Paths.image = QFileInfo(filename).path();
         if(filename.endsWith(".png")) {
             filename.chop(4);
         }

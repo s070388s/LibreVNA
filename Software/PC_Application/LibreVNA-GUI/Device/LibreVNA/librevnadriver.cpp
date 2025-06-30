@@ -112,29 +112,38 @@ LibreVNADriver::LibreVNADriver()
 {
     connected = false;
     skipOwnPacketHandling = false;
+    isIdle = true;
     SApoints = 0;
     hardwareVersion = 0;
     protocolVersion = 0;
     setSynchronization(Synchronization::Disabled, false);
+    manualControlDialog = nullptr;
 
-    auto manual = new QAction("Manual Control");
-    connect(manual, &QAction::triggered, this, [=](){
-        QDialog *d = nullptr;
+    // Add driver specific actions
+
+    auto startManualControl = [=](){
+        manualControlDialog = nullptr;
         switch(hardwareVersion) {
         case 1:
-            d = new ManualControlDialogV1(*this);
+            manualControlDialog = new ManualControlDialogV1(*this);
             break;
         case 0xFE:
-            d = new ManualControlDialogVFE(*this);
+            manualControlDialog = new ManualControlDialogVFE(*this);
             break;
         case 0xFF:
-            d = new ManualControlDialogVFF(*this);
+            manualControlDialog = new ManualControlDialogVFF(*this);
             break;
         }
-        if(d) {
-            d->show();
+        if(manualControlDialog) {
+            manualControlDialog->show();
+            connect(manualControlDialog, &QDialog::finished, this, [=](){
+                manualControlDialog = nullptr;
+            });
         }
-    });
+    };
+
+    auto manual = new QAction("Manual Control");
+    connect(manual, &QAction::triggered, this, startManualControl);
     specificActions.push_back(manual);
 
     auto config = new QAction("Configuration");
@@ -199,6 +208,55 @@ LibreVNADriver::LibreVNADriver()
        d->show();
     });
     specificActions.push_back(log);
+
+    // Create driver specific commands
+    specificSCPIcommands.push_back(new SCPICommand("DEVice:INFo:TEMPeratures", nullptr, [=](QStringList) -> QString {
+        if(!connected) {
+            return SCPI::getResultName(SCPI::Result::Error);
+        }
+        return QString::number(lastStatus.V1.temp_source)+"/"+QString::number(lastStatus.V1.temp_LO1)+"/"+QString::number(lastStatus.V1.temp_MCU);
+    }));
+
+    specificSCPIcommands.push_back(new SCPICommand("DEVice:UPDATE", [=](QStringList params) -> QString {
+        if(!connected) {
+            return SCPI::getResultName(SCPI::Result::Error);
+        }
+        if(params.size() != 1) {
+            // no file given
+            return SCPI::getResultName(SCPI::Result::Error);
+        }
+        auto ret = updateFirmware(params[0]);
+        if(!ret) {
+            // update failed
+            return SCPI::getResultName(SCPI::Result::Error);
+        } else {
+            // update succeeded
+            return SCPI::getResultName(SCPI::Result::Empty);
+        }
+    }, nullptr, false));
+
+    specificSCPIcommands.push_back(new SCPICommand("MANual:STArt", [=](QStringList) -> QString {
+        if(!manualControlDialog) {
+            startManualControl();
+            if(!manualControlDialog) {
+                return SCPI::getResultName(SCPI::Result::Error);
+            }
+        }
+        return SCPI::getResultName(SCPI::Result::Empty);
+    }, nullptr));
+
+    specificSCPIcommands.push_back(new SCPICommand("MANual:STOp", [=](QStringList) -> QString {
+        if(manualControlDialog) {
+            delete manualControlDialog;
+            manualControlDialog = nullptr;
+        }
+        return SCPI::getResultName(SCPI::Result::Empty);
+    }, nullptr));
+
+    specificSCPIcommands.push_back(new SCPICommand("DEVice:PACKETLOG", nullptr, [=](QStringList) -> QString {
+        auto &log = DevicePacketLog::getInstance();
+        return QString::fromStdString(log.toJSON().dump());
+    }));
 }
 
 std::set<DeviceDriver::Flag> LibreVNADriver::getFlags()
@@ -355,6 +413,7 @@ QStringList LibreVNADriver::availableVNAMeasurements()
 bool LibreVNADriver::setVNA(const DeviceDriver::VNASettings &s, std::function<void (bool)> cb)
 {
     if(!supports(Feature::VNA)) {
+        qDebug() << "VNA does not support features \"VNA\" (has the DeviceInfo been received?)";
         return false;
     }
     if(s.excitedPorts.size() == 0) {
@@ -376,6 +435,13 @@ bool LibreVNADriver::setVNA(const DeviceDriver::VNASettings &s, std::function<vo
     p.settings.cdbm_excitation_start = s.dBmStart * 100;
     p.settings.cdbm_excitation_stop = s.dBmStop * 100;
     p.settings.stages = s.excitedPorts.size() - 1;
+    auto dwell_us = s.dwellTime * 1e6;
+    if(dwell_us < 0) {
+        dwell_us = 0;
+    } else if(dwell_us > UINT16_MAX) {
+        dwell_us = UINT16_MAX;
+    }
+    p.settings.dwell_time = dwell_us;
     p.settings.suppressPeaks = VNASuppressInvalidPeaks ? 1 : 0;
     p.settings.fixedPowerSetting = VNAAdjustPowerLevel || s.dBmStart != s.dBmStop ? 0 : 1;
     p.settings.logSweep = s.logSweep ? 1 : 0;
@@ -387,6 +453,9 @@ bool LibreVNADriver::setVNA(const DeviceDriver::VNASettings &s, std::function<vo
     p.settings.port4Stage = find(s.excitedPorts.begin(), s.excitedPorts.end(), 4) - s.excitedPorts.begin();
     p.settings.syncMode = (int) sync;
     p.settings.syncMaster = syncMaster ? 1 : 0;
+
+    isIdle = false;
+    lastNonIdlePacket = p;
 
     return SendPacket(p, [=](TransmissionResult r){
         if(cb) {
@@ -442,31 +511,8 @@ bool LibreVNADriver::setSA(const DeviceDriver::SASettings &s, std::function<void
     p.spectrumSettings.syncMode = (int) sync;
     p.spectrumSettings.syncMaster = syncMaster ? 1 : 0;
 
-    if(p.spectrumSettings.trackingGenerator && p.spectrumSettings.f_stop >= 25000000) {
-        // Check point spacing.
-        // The highband PLL used as the tracking generator is not able to reach every frequency exactly. This
-        // could lead to sharp drops in the spectrum at certain frequencies. If the span is wide enough with
-        // respect to the point number, it is ensured that every displayed point has at least one sample with
-        // a reachable PLL frequency in it. Display a warning message if this is not the case with the current
-        // settings.
-        auto pointSpacing = (p.spectrumSettings.f_stop - p.spectrumSettings.f_start) / (p.spectrumSettings.pointNum - 1);
-        // The frequency resolution of the PLL is frequency dependent (due to PLL divider).
-        // This code assumes some knowledge of the actual hardware and probably should be moved
-        // onto the device at some point
-        double minSpacing = 25000;
-        auto stop = p.spectrumSettings.f_stop;
-        while(stop <= 3000000000) {
-            minSpacing /= 2;
-            stop *= 2;
-        }
-        if(pointSpacing < minSpacing) {
-            auto requiredMinSpan = minSpacing * (p.spectrumSettings.pointNum - 1);
-            auto message = QString() + "Due to PLL limitations, the tracking generator can not reach every frequency exactly. "
-                            "With your current span, this could result in the signal not being detected at some bands. A minimum"
-                            " span of " + Unit::ToString(requiredMinSpan, "Hz", " kMG") + " is recommended at this stop frequency.";
-            InformationBox::ShowMessage("Warning", message, "TrackingGeneratorSpanTooSmallWarning");
-        }
-    }
+    isIdle = false;
+    lastNonIdlePacket = p;
 
     return SendPacket(p, [=](TransmissionResult r){
         if(cb) {
@@ -492,11 +538,14 @@ bool LibreVNADriver::setSG(const DeviceDriver::SGSettings &s)
     p.generator.cdbm_level = s.dBm * 100;
     p.generator.activePort = s.port;
     p.generator.applyAmplitudeCorrection = true;
+    isIdle = false;
+    lastNonIdlePacket = p;
     return SendPacket(p);
 }
 
 bool LibreVNADriver::setIdle(std::function<void (bool)> cb)
 {
+    isIdle = true;
     Protocol::PacketInfo p;
     p.type = Protocol::PacketType::SetIdle;
     return SendPacket(p, [=](TransmissionResult res) {
@@ -569,7 +618,21 @@ bool LibreVNADriver::setExtRef(QString option_in, QString option_out)
     case Reference::OutFreq::MHZ100: p.reference.ExtRefOuputFreq = 100000000; break;
     }
 
-    return SendPacket(p);
+    bool ret;
+    if(isIdle) {
+        // can switch reference directly
+        ret = SendPacket(p);
+    } else {
+        // switching the reference while a sweep (or any frequency generation is active)
+        // can result in wrong frequencies when a frequency calibration is applied to
+        // the internal reference. Stop any activity before switching the reference and
+        // start it again afterwards
+        ret = sendWithoutPayload(Protocol::PacketType::SetIdle);
+        ret &= SendPacket(p);
+        ret &= SendPacket(lastNonIdlePacket);
+    }
+
+    return ret;
 }
 
 void LibreVNADriver::registerTypes()
@@ -612,7 +675,7 @@ void LibreVNADriver::handleReceivedPacket(const Protocol::PacketInfo &packet)
         info.firmware_version = QString::number(packet.info.FW_major)+"."+QString::number(packet.info.FW_minor)+"."+QString::number(packet.info.FW_patch);
         info.hardware_version = hardwareVersionToString(packet.info.hardware_version)+" Rev."+QString(packet.info.HW_Revision);
         info.supportedFeatures = {
-            Feature::VNA, Feature::VNAFrequencySweep, Feature::VNALogSweep, Feature::VNAPowerSweep, Feature::VNAZeroSpan,
+            Feature::VNA, Feature::VNAFrequencySweep, Feature::VNALogSweep, Feature::VNAPowerSweep, Feature::VNAZeroSpan, Feature::VNADwellTime,
             Feature::Generator,
             Feature::SA, Feature::SATrackingGenerator, Feature::SATrackingOffset,
             Feature::ExtRefIn, Feature::ExtRefOut,
@@ -625,6 +688,7 @@ void LibreVNADriver::handleReceivedPacket(const Protocol::PacketInfo &packet)
         info.Limits.VNA.maxIFBW = packet.info.limits_maxIFBW;
         info.Limits.VNA.mindBm = (double) packet.info.limits_cdbm_min / 100;
         info.Limits.VNA.maxdBm = (double) packet.info.limits_cdbm_max / 100;
+        info.Limits.VNA.maxDwellTime = (double) packet.info.limits_maxDwellTime * 1e-6;
 
         info.Limits.Generator.ports = packet.info.num_ports;
         info.Limits.Generator.minFreq = packet.info.limits_minFreq;

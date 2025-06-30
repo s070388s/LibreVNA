@@ -46,6 +46,8 @@ Marker::Marker(MarkerModel *model, int number, Marker *parent, QString descr)
     connect(this, &Marker::traceChanged, this, &Marker::updateContextmenu);
     connect(this, &Marker::typeChanged, this, &Marker::updateContextmenu);
     updateContextmenu();
+
+    connect(&Preferences::getInstance(), &Preferences::updated, this, &Marker::updateSymbol);
 }
 
 Marker::~Marker()
@@ -788,8 +790,10 @@ void Marker::parentTraceDeleted(Trace *t)
     }
 }
 
-void Marker::traceDataChanged()
+void Marker::traceDataChanged(unsigned int begin, unsigned int end)
 {
+    Q_UNUSED(begin)
+    Q_UNUSED(end)
     complex<double> newdata;
     if(!parentTrace || parentTrace->numSamples() == 0) {
         // no data, invalidate
@@ -813,7 +817,7 @@ void Marker::traceDataChanged()
 
 void Marker::updateSymbol()
 {
-    if(isDisplayedMarker()) {
+    if(isDisplayedMarker() && parentTrace) {
         auto style = Preferences::getInstance().Marker.symbolStyle;
         switch(style) {
         case MarkerSymbolStyle::FilledNumberInside: {
@@ -1088,7 +1092,7 @@ void Marker::constrainPosition()
                 position = parentTrace->sample(parentTrace->index(position)).x;
             }
         }
-        traceDataChanged();
+        traceDataChanged(0, parentTrace->size());
     }
 }
 

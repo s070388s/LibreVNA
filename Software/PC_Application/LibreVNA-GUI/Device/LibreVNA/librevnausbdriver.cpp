@@ -4,6 +4,7 @@
 #include "devicepacketlog.h"
 
 #include <QTimer>
+#include <QThread>
 
 using namespace std;
 
@@ -26,6 +27,8 @@ LibreVNAUSBDriver::LibreVNAUSBDriver()
     dataBuffer = nullptr;
     logBuffer = nullptr;
     m_receiveThread = nullptr;
+    lastTimestamp = QDateTime::currentDateTime();
+    byteCnt = 0;
 
     specificSettings.push_back(Savable::SettingDescription(&captureRawReceiverValues, "LibreVNAUSBDriver.captureRawReceiverValues", false));
     specificSettings.push_back(Savable::SettingDescription(&harmonicMixing, "LibreVNAUSBDriver.harmonicMixing", false));
@@ -164,9 +167,9 @@ void LibreVNAUSBDriver::ReceivedData()
     uint16_t handled_len;
 //    qDebug() << "Received data";
     do {
-//        qDebug() << "Decoding" << dataBuffer->getReceived() << "Bytes";
+        // qDebug() << "Decoding" << dataBuffer->getReceived() << "Bytes";
         handled_len = Protocol::DecodeBuffer(dataBuffer->getBuffer(), dataBuffer->getReceived(), &packet);
-//        qDebug() << "Handled" << handled_len << "Bytes, type:" << (int) packet.type;
+        // qDebug() << "Handled" << handled_len << "Bytes, type:" << (int) packet.type;
         if(handled_len > 0) {
             auto &log = DevicePacketLog::getInstance();
             if(packet.type != Protocol::PacketType::None) {
@@ -176,6 +179,12 @@ void LibreVNAUSBDriver::ReceivedData()
             }
         }
         dataBuffer->removeBytes(handled_len);
+        if(packet.type == Protocol::PacketType::SetTrigger) {
+            qDebug() << "Incoming set trigger from " << serial;
+        }
+        if(packet.type == Protocol::PacketType::ClearTrigger) {
+            qDebug() << "Incoming clear trigger from " << serial;
+        }
         switch(packet.type) {
         case Protocol::PacketType::Ack:
             emit receivedAnswer(TransmissionResult::Ack);
@@ -183,11 +192,27 @@ void LibreVNAUSBDriver::ReceivedData()
         case Protocol::PacketType::Nack:
             emit receivedAnswer(TransmissionResult::Nack);
             break;
-       default:
+        case Protocol::PacketType::SetTrigger:
+            emit receivedTrigger(this, true);
+            break;
+        case Protocol::PacketType::ClearTrigger:
+            emit receivedTrigger(this, false);
+            break;
+        case Protocol::PacketType::None:
+            break;
+        default:
             // pass on to LibreVNADriver class
             emit receivedPacket(packet);
             break;
         }
+        // byteCnt += handled_len;
+        // auto now = QDateTime::currentDateTime();
+        // if(lastTimestamp.time().msecsTo(now.time()) > 1000) {
+        //     lastTimestamp = now;
+        //     constexpr unsigned int maxThroughput = 12000000 / 8;
+        //     qDebug() << "USB throughput: " << byteCnt << "(" << (double) byteCnt * 100.0 / maxThroughput << "%)";
+        //     byteCnt = 0;
+        // }
     } while (handled_len > 0);
 }
 
@@ -210,12 +235,12 @@ void LibreVNAUSBDriver::transmissionFinished(LibreVNADriver::TransmissionResult 
 {
     lock_guard<mutex> lock(transmissionMutex);
     // remove transmitted packet
-//    qDebug() << "Transmission finsished (" << result << "), queue at " << transmissionQueue.size() << " Outstanding ACKs:"<<outstandingAckCount;
     if(transmissionQueue.empty()) {
         qWarning() << "transmissionFinished with empty transmission queue, stray Ack? Result:" << result;
         return;
     }
     auto t = transmissionQueue.dequeue();
+    // qDebug() << "Transmission finsished (packet type" << (int) t.packet.type <<",result" << result << "), queue at " << transmissionQueue.size();
     if(result == TransmissionResult::Timeout) {
         qWarning() << "transmissionFinished with timeout, packettype:" << (int) t.packet.type << "Device:" << serial;
     }
@@ -364,6 +389,6 @@ bool LibreVNAUSBDriver::startNextTransmission()
         return false;
     }
     transmissionTimer.start(t.timeout);
-//    qDebug() << "Transmission started, queue at " << transmissionQueue.size();
+    // qDebug() << "Transmission started (packet type" << (int) t.packet.type << "), queue at " << transmissionQueue.size();
     return true;
 }

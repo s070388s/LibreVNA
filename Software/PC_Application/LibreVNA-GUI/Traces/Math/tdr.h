@@ -48,13 +48,18 @@ public:
     Mode getMode() const;
     const WindowFunction& getWindow() const;
 
+    unsigned int getUnpaddedInputSize() const;
+
 public slots:
     void inputSamplesChanged(unsigned int begin, unsigned int end) override;
 
 private:
     void updateTDR();
+    void clearOutput();
     Mode mode;
     WindowFunction window;
+    unsigned int padding;
+    unsigned int unpaddedInputSize;
     bool stepResponse;
     bool automaticDC;
     std::complex<double> manualDC;

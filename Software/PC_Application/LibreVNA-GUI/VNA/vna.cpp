@@ -168,7 +168,11 @@ VNA::VNA(AppWindow *window, QString name)
 
     // A modal QProgressDialog calls processEvents() in setValue(). Needs to use a queued connection to update the progress
     // value from within the NewDatapoint slot to prevent possible re-entrancy.
-    connect(this, &VNA::calibrationMeasurementPercentage, calDialog, &QProgressDialog::setValue, Qt::QueuedConnection);
+    connect(this, &VNA::calibrationMeasurementPercentage, calDialog, [=](int percent) {
+        if(calMeasuring || percent == 100) {
+            calDialog->setValue(percent);
+        }
+    }, Qt::QueuedConnection);
 
     connect(calDialog, &QProgressDialog::canceled, this, [=]() {
         // the user aborted the calibration measurement
@@ -184,8 +188,9 @@ VNA::VNA(AppWindow *window, QString name)
     auto menuDeembed = new QMenu("De-embedding", window);
     window->menuBar()->insertMenu(window->getUi()->menuWindow->menuAction(), menuDeembed);
     actions.insert(menuDeembed->menuAction());
-    auto confDeembed = menuDeembed->addAction("Setup...");
+    auto confDeembed = new QAction("Setup...", menuDeembed);
     confDeembed->setMenuRole(QAction::NoRole);
+    menuDeembed->addAction(confDeembed);
     connect(confDeembed, &QAction::triggered, &deembedding, &Deembedding::configure);
 
     enableDeembeddingAction = menuDeembed->addAction("De-embed VNA samples");
@@ -454,6 +459,14 @@ VNA::VNA(AppWindow *window, QString name)
     tb_acq->addWidget(new QLabel("IF BW:"));
     tb_acq->addWidget(eBandwidth);
 
+    tb_acq->addWidget(new QLabel("Dwell time:"));
+    acquisitionDwellTime = new SIUnitEdit("s", "um ", 3);
+    width = QFontMetrics(dbm->font()).horizontalAdvance("100ms") + 20;
+    acquisitionDwellTime->setFixedWidth(width);
+    connect(acquisitionDwellTime, &SIUnitEdit::valueChanged, this, &VNA::SetDwellTime);
+    connect(this, &VNA::dwellTimeChanged, acquisitionDwellTime, &SIUnitEdit::setValueQuiet);
+    tb_acq->addWidget(acquisitionDwellTime);
+
     tb_acq->addWidget(new QLabel("Averaging:"));
     lAverages = new QLabel("0/");
     tb_acq->addWidget(lAverages);
@@ -645,6 +658,7 @@ VNA::VNA(AppWindow *window, QString name)
         SetPowerSweepFrequency(pref.Startup.DefaultSweep.dbm_freq);
         SetIFBandwidth(pref.Startup.DefaultSweep.bandwidth);
         SetAveraging(pref.Startup.DefaultSweep.averaging);
+        SetDwellTime(pref.Startup.DefaultSweep.dwellTime);
         SetPoints(pref.Startup.DefaultSweep.points);
         if(pref.Startup.DefaultSweep.type == "Power Sweep") {
             SetSweepType(SweepType::Power);
@@ -736,10 +750,10 @@ QString VNA::getCalToolTip()
 
 void VNA::deactivate()
 {
-    setOperationPending(false);
     StoreSweepSettings();
     configurationTimer.stop();
     Mode::deactivate();
+    setOperationPending(false);
 }
 
 static void SetComboBoxItemEnabled(QComboBox * comboBox, int index, bool enabled)
@@ -828,6 +842,7 @@ void VNA::resetSettings()
     SetStopPower(DeviceDriver::getInfo(window->getDevice()).Limits.VNA.maxdBm);
     SetPowerSweepFrequency(DeviceDriver::getInfo(window->getDevice()).Limits.VNA.maxFreq);
     SetIFBandwidth(1000);
+    SetDwellTime(0);
     SetAveraging(1);
     SetPoints(501);
     SetSweepType(SweepType::Frequency);
@@ -929,9 +944,8 @@ void VNA::NewDatapoint(DeviceDriver::VNAMeasurement m)
     }
 
     // Calculate sweep time
-    if(m.pointNum == 0) {
+    if(m.pointNum == 0 && lastPoint > 0) {
         // new sweep started
-        static auto lastStart = QDateTime::currentDateTimeUtc();
         auto now = QDateTime::currentDateTimeUtc();
         auto sweepTime = lastStart.msecsTo(now);
         lastStart = now;
@@ -967,7 +981,30 @@ void VNA::NewDatapoint(DeviceDriver::VNAMeasurement m)
 
     m_avg = average.process(m_avg);
 
-    window->addStreamingData(m_avg, AppWindow::VNADataType::Raw);
+    TraceMath::DataType type = TraceMath::DataType::Frequency;
+    if(settings.zerospan) {
+        type = TraceMath::DataType::TimeZeroSpan;
+
+        // keep track of first point time
+        if(m_avg.pointNum == 0) {
+            settings.firstPointTime = m_avg.us;
+            m_avg.us = 0;
+        } else {
+            m_avg.us -= settings.firstPointTime;
+        }
+    } else {
+        switch(settings.sweepType) {
+        case SweepType::Last:
+        case SweepType::Frequency:
+            type = TraceMath::DataType::Frequency;
+            break;
+        case SweepType::Power:
+            type = TraceMath::DataType::Power;
+            break;
+        }
+    }
+
+    window->addStreamingData(m_avg, AppWindow::VNADataType::Raw, settings.zerospan);
 
     if(average.settled()) {
         setOperationPending(false);
@@ -992,36 +1029,13 @@ void VNA::NewDatapoint(DeviceDriver::VNAMeasurement m)
     cal.correctMeasurement(m_avg);
 
     if(cal.getCaltype().type != Calibration::Type::None) {
-        window->addStreamingData(m_avg, AppWindow::VNADataType::Calibrated);
-    }
-
-    TraceMath::DataType type = TraceMath::DataType::Frequency;
-    if(settings.zerospan) {
-        type = TraceMath::DataType::TimeZeroSpan;
-
-        // keep track of first point time
-        if(m_avg.pointNum == 0) {
-            settings.firstPointTime = m_avg.us;
-            m_avg.us = 0;
-        } else {
-            m_avg.us -= settings.firstPointTime;
-        }
-    } else {
-        switch(settings.sweepType) {
-        case SweepType::Last:
-        case SweepType::Frequency:
-            type = TraceMath::DataType::Frequency;
-            break;
-        case SweepType::Power:
-            type = TraceMath::DataType::Power;
-            break;
-        }
+        window->addStreamingData(m_avg, AppWindow::VNADataType::Calibrated, settings.zerospan);
     }
 
     traceModel.addVNAData(m_avg, type, false);
     if(deembedding_active) {
         deembedding.Deembed(m_avg);
-        window->addStreamingData(m_avg, AppWindow::VNADataType::Deembedded);
+        window->addStreamingData(m_avg, AppWindow::VNADataType::Deembedded, settings.zerospan);
         traceModel.addVNAData(m_avg, type, true);
     }
 
@@ -1032,8 +1046,7 @@ void VNA::NewDatapoint(DeviceDriver::VNAMeasurement m)
         markerModel->updateMarkers();
     }
 
-    static unsigned int lastPoint = 0;
-    if(m_avg.pointNum > 0 && m_avg.pointNum != lastPoint + 1) {
+    if(m_avg.pointNum > 0 && m_avg.pointNum != (unsigned int) (lastPoint + 1)) {
         qWarning() << "Got point" << m_avg.pointNum << "but last received point was" << lastPoint << "("<<(m_avg.pointNum-lastPoint-1)<<"missed points)";
     }
     lastPoint = m_avg.pointNum;
@@ -1055,7 +1068,11 @@ void VNA::UpdateAverageCount()
 
 void VNA::SettingsChanged(bool resetTraces, int delay)
 {
-    if(window->getDevice()) {
+    if(!running) {
+        // not running, no need for any communication
+        return;
+    }
+    if(isActive && window->getDevice()) {
         setOperationPending(true);
     }
     configurationTimer.start(delay);
@@ -1210,6 +1227,7 @@ bool VNA::SpanMatchCal()
     SetStartFreq(cal.getMinFreq());
     SetStopFreq(cal.getMaxFreq());
     SetPoints(cal.getNumPoints());
+    UpdateCalWidget();
     return true;
 }
 
@@ -1232,6 +1250,15 @@ void VNA::SetSourceLevel(double level)
     }
     emit sourceLevelChanged(level);
     settings.Freq.excitation_power = level;
+    SettingsChanged();
+}
+
+void VNA::SetDwellTime(double time) {
+    if(time > DeviceDriver::getInfo(window->getDevice()).Limits.VNA.maxDwellTime) {
+        time = DeviceDriver::getInfo(window->getDevice()).Limits.VNA.maxDwellTime;
+    }
+    emit dwellTimeChanged(time);
+    settings.dwellTime = time;
     SettingsChanged();
 }
 
@@ -1298,7 +1325,9 @@ void VNA::SetAveraging(unsigned int averages)
     average.setAverages(averages);
     emit averagingChanged(averages);
     UpdateAverageCount();
-    setOperationPending(!average.settled());
+    if(isActive && window->getDevice()) {
+        setOperationPending(!average.settled());
+    }
 }
 
 void VNA::ExcitationRequired()
@@ -1621,6 +1650,7 @@ void VNA::LoadSweepSettings()
     SetPoints(s.value("SweepPoints", pref.Startup.DefaultSweep.points).toInt());
     SetIFBandwidth(s.value("SweepBandwidth", pref.Startup.DefaultSweep.bandwidth).toUInt());
     SetAveraging(s.value("SweepAveraging", pref.Startup.DefaultSweep.averaging).toInt());
+    SetDwellTime(s.value("SweepDwellTime", pref.Startup.DefaultSweep.dwellTime).toDouble());
     ConstrainAndUpdateFrequencies();
     auto typeString = s.value("SweepType", pref.Startup.DefaultSweep.type).toString();
     if(typeString == "Power") {
@@ -1644,12 +1674,43 @@ void VNA::StoreSweepSettings()
     s.setValue("SweepBandwidth", settings.bandwidth);
     s.setValue("SweepPoints", settings.npoints);
     s.setValue("SweepAveraging", averages);
+    s.setValue("SweepDwellTime", settings.dwellTime);
 }
 
 void VNA::UpdateCalWidget()
 {
     calLabel->setStyleSheet(getCalStyle());
     calLabel->setToolTip(getCalToolTip());
+}
+
+void VNA::ConstrainAllSettings()
+{
+    auto maxFreq = DeviceDriver::getInfo(window->getDevice()).Limits.VNA.maxFreq;
+    auto minFreq = DeviceDriver::getInfo(window->getDevice()).Limits.VNA.minFreq;
+    auto maxPower = DeviceDriver::getInfo(window->getDevice()).Limits.VNA.maxdBm;
+    auto minPower = DeviceDriver::getInfo(window->getDevice()).Limits.VNA.mindBm;
+    auto maxIFBW = DeviceDriver::getInfo(window->getDevice()).Limits.VNA.maxIFBW;
+    auto minIFBW = DeviceDriver::getInfo(window->getDevice()).Limits.VNA.minIFBW;
+    auto maxDwell = DeviceDriver::getInfo(window->getDevice()).Limits.VNA.maxDwellTime;
+    auto maxPoints = DeviceDriver::getInfo(window->getDevice()).Limits.VNA.maxPoints;
+    Util::constrain(settings.Freq.start, minFreq, maxFreq);
+    Util::constrain(settings.Freq.stop, minFreq, maxFreq);
+    Util::constrain(settings.Freq.excitation_power, minPower, maxPower);
+    Util::constrain(settings.bandwidth, minIFBW, maxIFBW);
+    Util::constrain(settings.dwellTime, 0.0, maxDwell);
+    Util::constrain(settings.npoints, (unsigned int) 0, maxPoints);
+    Util::constrain(settings.Power.frequency, minFreq, maxFreq);
+    Util::constrain(settings.Power.start, minPower, maxPower);
+    Util::constrain(settings.Power.stop, minPower, maxPower);
+    emit startFreqChanged(settings.Freq.start);
+    emit stopFreqChanged(settings.Freq.stop);
+    emit sourceLevelChanged(settings.Freq.excitation_power);
+    emit IFBandwidthChanged(settings.bandwidth);
+    emit dwellTimeChanged(settings.dwellTime);
+    emit pointsChanged(settings.npoints);
+    emit powerSweepFrequencyChanged(settings.Power.frequency);
+    emit startPowerChanged(settings.Power.start);
+    emit stopPowerChanged(settings.Power.stop);
 }
 
 void VNA::createDefaultTracesAndGraphs(int ports)
@@ -1780,6 +1841,16 @@ void VNA::preset()
     createDefaultTracesAndGraphs(DeviceDriver::getInfo(window->getDevice()).Limits.VNA.ports);
 }
 
+void VNA::deviceInfoUpdated()
+{
+    if(window->getDevice()->supports(DeviceDriver::Feature::VNADwellTime)) {
+        acquisitionDwellTime->setEnabled(true);
+    } else {
+        acquisitionDwellTime->setEnabled(false);
+    }
+    ConstrainAllSettings();
+}
+
 QString VNA::SweepTypeToString(VNA::SweepType sw)
 {
     switch(sw) {
@@ -1819,10 +1890,15 @@ void VNA::SetSingleSweep(bool single)
 {
     if(singleSweep != single) {
         singleSweep = single;
+        if(single) {
+            Run();
+        }
         emit singleSweepChanged(single);
-    }
-    if(single) {
-        Run();
+    } else {
+        // if already set to single, a second single command triggers a new sweep
+        if(single && !running) {
+            Run();
+        }
     }
 }
 
@@ -1836,6 +1912,7 @@ void VNA::Stop()
 {
     running = false;
     ConfigureDevice(false);
+    setOperationPending(false);
 }
 
 void VNA::ConfigureDevice(bool resetTraces, std::function<void(bool)> cb)
@@ -1904,6 +1981,7 @@ void VNA::ConfigureDevice(bool resetTraces, std::function<void(bool)> cb)
             s.dBmStop = stop;
             s.logSweep = false;
         }
+        s.dwellTime = settings.dwellTime;
         if(window->getDevice() && isActive) {
             window->getDevice()->setVNA(s, [=](bool res){
                 // device received command, reset traces now
@@ -1914,6 +1992,8 @@ void VNA::ConfigureDevice(bool resetTraces, std::function<void(bool)> cb)
                     cb(res);
                 }
                 changingSettings = false;
+                lastStart = QDateTime::currentDateTimeUtc();
+                lastPoint = -1;
             });
             emit sweepStarted();
         } else {
@@ -1942,7 +2022,7 @@ void VNA::ResetLiveTraces()
     traceModel.clearLiveData();
     UpdateAverageCount();
     UpdateCalWidget();
-    if(window->getDevice()) {
+    if(isActive && window->getDevice()) {
         setOperationPending(true);
     }
 }

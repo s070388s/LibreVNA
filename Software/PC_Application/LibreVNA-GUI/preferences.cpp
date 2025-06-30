@@ -68,7 +68,7 @@ PreferencesDialog::PreferencesDialog(Preferences *pref, QWidget *parent) :
        ui->StartupStack->setCurrentWidget(ui->StartupPageSetupFile);
     });
     connect(ui->StartupBrowse, &QPushButton::clicked, [=](){
-       ui->StartupSetupFile->setText(QFileDialog::getOpenFileName(nullptr, "Select startup setup file", "", "Setup files (*.setup)", nullptr, Preferences::QFileDialogOptions()));
+       ui->StartupSetupFile->setText(QFileDialog::getOpenFileName(nullptr, "Select startup setup file", Preferences::getInstance().UISettings.Paths.setup, "Setup files (*.setup)", nullptr, Preferences::QFileDialogOptions()));
     });
     ui->StartupSweepStart->setUnit("Hz");
     ui->StartupSweepStart->setPrefixes(" kMG");
@@ -78,6 +78,9 @@ PreferencesDialog::PreferencesDialog(Preferences *pref, QWidget *parent) :
     ui->StartupSweepPowerFrequency->setPrefixes(" kMG");
     ui->StartupSweepBandwidth->setUnit("Hz");
     ui->StartupSweepBandwidth->setPrefixes(" k");
+    ui->StartupSweepDwellTime->setUnit("s");
+    ui->StartupSweepDwellTime->setPrefixes("um ");
+    ui->StartupSweepDwellTime->setPrecision(3);
     ui->StartupGeneratorFrequency->setUnit("Hz");
     ui->StartupGeneratorFrequency->setPrefixes(" kMG");
     ui->StartupSAStart->setUnit("Hz");
@@ -106,6 +109,18 @@ PreferencesDialog::PreferencesDialog(Preferences *pref, QWidget *parent) :
     ui->GraphsZoomFactor->setPrecision(3);
     ui->GraphsSweepHidePercent->setPrecision(3);
     ui->GraphsSweepHidePercent->setUnit("%");
+
+    auto layout = static_cast<QGridLayout*>(ui->GraphAxisLimitGroup->layout());
+    for(unsigned int i=(int) YAxis::Type::Disabled + 1;i<(int) YAxis::Type::Last;i++) {
+        auto type = (YAxis::Type) i;
+        layout->addWidget(new QLabel(YAxis::TypeToName(type)), i, 0);
+        auto minEntry = new SIUnitEdit(YAxis::Unit(type), YAxis::Prefixes(type), 5);
+        layout->addWidget(minEntry, i, 1);
+        graphAxisLimitsMinEntries[type] = minEntry;
+        auto maxEntry = new SIUnitEdit(YAxis::Unit(type), YAxis::Prefixes(type), 5);
+        layout->addWidget(maxEntry, i, 2);
+        graphAxisLimitsMaxEntries[type] = maxEntry;
+    }
 
     // General page
     if(p->TCPoverride) {
@@ -180,34 +195,39 @@ PreferencesDialog::PreferencesDialog(Preferences *pref, QWidget *parent) :
         // apply GUI state to settings
         updateFromGUI();
         accept();
+        emit p->updated();
     });
     connect(ui->buttonBox->button(QDialogButtonBox::Apply), &QPushButton::clicked, [=](){
         // apply GUI state to settings
         updateFromGUI();
+        emit p->updated();
     });
     connect(ui->buttonBox->button(QDialogButtonBox::Save), &QPushButton::clicked, [=](){
-        auto filename = QFileDialog::getSaveFileName(this, "Save preferences", "", "LibreVNA preferences files (*.vnapref)", nullptr, Preferences::QFileDialogOptions());
+        auto filename = QFileDialog::getSaveFileName(this, "Save preferences", Preferences::getInstance().UISettings.Paths.pref, "LibreVNA preferences files (*.vnapref)", nullptr, Preferences::QFileDialogOptions());
         if(filename.length() > 0) {
-           if(!filename.toLower().endsWith(".vnapref")) {
+            Preferences::getInstance().UISettings.Paths.pref = QFileInfo(filename).path();
+            if(!filename.toLower().endsWith(".vnapref")) {
                filename.append(".vnapref");
-           }
-           ofstream file;
-           file.open(filename.toStdString());
-           updateFromGUI();
-           file << setw(1) << p->toJSON();
-           file.close();
+            }
+            ofstream file;
+            file.open(filename.toStdString());
+            updateFromGUI();
+            file << setw(1) << p->toJSON();
+            file.close();
         }
     });
     connect(ui->buttonBox->button(QDialogButtonBox::Open), &QPushButton::clicked, [=](){
-        auto filename = QFileDialog::getOpenFileName(this, "Load preferences", "", "LibreVNA preferences files (*.vnapref)", nullptr, Preferences::QFileDialogOptions());
+        auto filename = QFileDialog::getOpenFileName(this, "Load preferences", Preferences::getInstance().UISettings.Paths.pref, "LibreVNA preferences files (*.vnapref)", nullptr, Preferences::QFileDialogOptions());
         if(filename.length() > 0) {
-           ifstream file;
-           file.open(filename.toStdString());
-           nlohmann::json j;
-           file >> j;
-           file.close();
-           p->fromJSON(j);
-           setInitialGUIState();
+            Preferences::getInstance().UISettings.Paths.pref = QFileInfo(filename).path();
+            ifstream file;
+            file.open(filename.toStdString());
+            nlohmann::json j;
+            file >> j;
+            file.close();
+            p->fromJSON(j);
+            setInitialGUIState();
+            emit p->updated();
         }
     });
     connect(ui->AcquisitionLimitTDRCheckbox, &QCheckBox::toggled, [=](bool enabled){
@@ -246,6 +266,7 @@ void PreferencesDialog::setInitialGUIState()
     ui->StartupGeneratorFrequency->setValue(p->Startup.Generator.frequency);
     ui->StartupGeneratorLevel->setValue(p->Startup.Generator.level);
     ui->StartupSweepAveraging->setValue(p->Startup.DefaultSweep.averaging);
+    ui->StartupSweepDwellTime->setValue(p->Startup.DefaultSweep.dwellTime);
     ui->StartupSAStart->setValue(p->Startup.SA.start);
     ui->StartupSAStop->setValue(p->Startup.SA.stop);
     ui->StartupSARBW->setValue(p->Startup.SA.RBW);
@@ -255,6 +276,7 @@ void PreferencesDialog::setInitialGUIState()
 
     ui->AcquisitionAlwaysExciteBoth->setChecked(p->Acquisition.alwaysExciteAllPorts);
     ui->AcquisitionAllowSegmentedSweep->setChecked(p->Acquisition.allowSegmentedSweep);
+    ui->AcquisitionAllowCalStartWithUnstableLibreCALTemperature->setChecked(p->Acquisition.allowUseOfUnstableLibreCALTemp);
     ui->AcquisitionAveragingMode->setCurrentIndex(p->Acquisition.useMedianAveraging ? 1 : 0);
     ui->AcquisitionFullSpanBehavior->setCurrentIndex(p->Acquisition.fullSpanManual ? 1 : 0);
     ui->AcquisitionFullSpanStart->setValue(p->Acquisition.fullSpanStart);
@@ -276,6 +298,7 @@ void PreferencesDialog::setInitialGUIState()
     ui->GraphsLimitIndication->setCurrentIndex((int) p->Graphs.limitIndication);
     ui->GraphsLimitNaNpasses->setCurrentIndex(p->Graphs.limitNaNpasses ? 1 : 0);
     ui->GraphsLineWidth->setValue(p->Graphs.lineWidth);
+    ui->GraphsFontSizeTitle->setValue(p->Graphs.fontSizeTitle);
     ui->GraphsFontSizeAxis->setValue(p->Graphs.fontSizeAxis);
     ui->GraphsFontSizeCursorOverlay->setValue(p->Graphs.fontSizeCursorOverlay);
     ui->GraphsFontSizeMarkerData->setValue(p->Graphs.fontSizeMarkerData);
@@ -288,9 +311,13 @@ void PreferencesDialog::setInitialGUIState()
     ui->GraphsSweepHide->setChecked(p->Graphs.SweepIndicator.hide);
     ui->GraphsSweepHidePercent->setValue(p->Graphs.SweepIndicator.hidePercent);
     ui->graphsEnableMasterTicksForYAxis->setChecked(p->Graphs.enableMasterTicksForYAxis);
+    for(unsigned int i=(int) YAxis::Type::Disabled + 1;i<(int) YAxis::Type::Last;i++) {
+        auto type = (YAxis::Type) i;
+        graphAxisLimitsMinEntries[type]->setValue(p->Graphs.defaultAxisLimits.min[i]);
+        graphAxisLimitsMaxEntries[type]->setValue(p->Graphs.defaultAxisLimits.max[i]);
+    }
 
     ui->MarkerShowMarkerData->setChecked(p->Marker.defaultBehavior.showDataOnGraphs);
-
     ui->MarkerShowdB->setChecked(p->Marker.defaultBehavior.showdB);
     ui->MarkerShowdBm->setChecked(p->Marker.defaultBehavior.showdBm);
     ui->MarkerShowdBUv->setChecked(p->Marker.defaultBehavior.showdBuV);
@@ -318,6 +345,7 @@ void PreferencesDialog::setInitialGUIState()
     ui->MarkerInterpolate->setCurrentIndex(p->Marker.interpolatePoints ? 1 : 0);
     ui->MarkerSortOrder->setCurrentIndex((int) p->Marker.sortOrder);
     ui->MarkerSymbolStyle->setCurrentIndex((int) p->Marker.symbolStyle);
+    ui->MarkerClipToYAxis->setChecked(p->Marker.clipToYAxis);
 
     ui->SCPIServerEnabled->setChecked(p->SCPIServer.enabled);
     ui->SCPIServerPort->setValue(p->SCPIServer.port);
@@ -360,6 +388,7 @@ void PreferencesDialog::updateFromGUI()
     p->Startup.DefaultSweep.bandwidth = ui->StartupSweepBandwidth->value();
     p->Startup.DefaultSweep.points = ui->StartupSweepPoints->value();
     p->Startup.DefaultSweep.averaging = ui->StartupSweepAveraging->value();
+    p->Startup.DefaultSweep.dwellTime = ui->StartupSweepDwellTime->value();
     p->Startup.Generator.frequency = ui->StartupGeneratorFrequency->value();
     p->Startup.Generator.level = ui->StartupGeneratorLevel->value();
     p->Startup.SA.start = ui->StartupSAStart->value();
@@ -370,6 +399,7 @@ void PreferencesDialog::updateFromGUI()
 
     p->Acquisition.alwaysExciteAllPorts = ui->AcquisitionAlwaysExciteBoth->isChecked();
     p->Acquisition.allowSegmentedSweep = ui->AcquisitionAllowSegmentedSweep->isChecked();
+    p->Acquisition.allowUseOfUnstableLibreCALTemp = ui->AcquisitionAllowCalStartWithUnstableLibreCALTemperature->isChecked();
     p->Acquisition.useMedianAveraging = ui->AcquisitionAveragingMode->currentIndex() == 1;
     p->Acquisition.fullSpanManual = ui->AcquisitionFullSpanBehavior->currentIndex() == 1;
     p->Acquisition.fullSpanStart = ui->AcquisitionFullSpanStart->value();
@@ -391,6 +421,7 @@ void PreferencesDialog::updateFromGUI()
     p->Graphs.limitIndication = (GraphLimitIndication) ui->GraphsLimitIndication->currentIndex();
     p->Graphs.limitNaNpasses = ui->GraphsLimitNaNpasses->currentIndex() == 1;
     p->Graphs.lineWidth = ui->GraphsLineWidth->value();
+    p->Graphs.fontSizeTitle = ui->GraphsFontSizeTitle->value();
     p->Graphs.fontSizeAxis = ui->GraphsFontSizeAxis->value();
     p->Graphs.fontSizeCursorOverlay = ui->GraphsFontSizeCursorOverlay->value();
     p->Graphs.fontSizeMarkerData = ui->GraphsFontSizeMarkerData->value();
@@ -403,6 +434,11 @@ void PreferencesDialog::updateFromGUI()
     p->Graphs.SweepIndicator.hide = ui->GraphsSweepHide->isChecked();
     p->Graphs.SweepIndicator.hidePercent = ui->GraphsSweepHidePercent->value();
     p->Graphs.enableMasterTicksForYAxis = ui->graphsEnableMasterTicksForYAxis->isChecked();
+    for(unsigned int i=(int) YAxis::Type::Disabled + 1;i<(int) YAxis::Type::Last;i++) {
+        auto type = (YAxis::Type) i;
+        p->Graphs.defaultAxisLimits.min[i] = graphAxisLimitsMinEntries[type]->value();
+        p->Graphs.defaultAxisLimits.max[i] = graphAxisLimitsMaxEntries[type]->value();
+    }
 
     p->Marker.defaultBehavior.showDataOnGraphs = ui->MarkerShowMarkerData->isChecked();
     p->Marker.defaultBehavior.showdB = ui->MarkerShowdB->isChecked();
@@ -432,6 +468,7 @@ void PreferencesDialog::updateFromGUI()
     p->Marker.interpolatePoints = ui->MarkerInterpolate->currentIndex() == 1;
     p->Marker.sortOrder = (MarkerSortOrder) ui->MarkerSortOrder->currentIndex();
     p->Marker.symbolStyle = (MarkerSymbolStyle) ui->MarkerSymbolStyle->currentIndex();
+    p->Marker.clipToYAxis = ui->MarkerClipToYAxis->isChecked();
 
     p->SCPIServer.enabled = ui->SCPIServerEnabled->isChecked();
     p->SCPIServer.port = ui->SCPIServerPort->value();

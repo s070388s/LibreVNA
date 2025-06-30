@@ -70,6 +70,11 @@ EyeDiagramPlot::~EyeDiagramPlot()
 
 void EyeDiagramPlot::enableTrace(Trace *t, bool enabled)
 {
+    bool already_enabled = trace == t;
+    if(already_enabled == enabled) {
+        // ignore, the requested condition is already fulfilled
+        return;
+    }
     if(enabled) {
         // only one trace at a time is allowed, disable all others
         for(auto t : traces) {
@@ -373,11 +378,13 @@ void EyeDiagramPlot::axisSetupDialog()
         yAxis.set(yAxis.getType(), false, ui->Yauto->isChecked(), ui->Ymin->value(), ui->Ymax->value(), ui->Ydivs->value(), ui->YautoDivs->isChecked());
     };
 
-    connect(ui->buttonBox->button(QDialogButtonBox::Ok), &QPushButton::clicked, [=](){
-       updateValues();
+    connect(ui->buttonBox->button(QDialogButtonBox::Ok), &QPushButton::clicked, this, [=](){
+        triggerUpdate();
+        updateValues();
     });
-    connect(ui->buttonBox->button(QDialogButtonBox::Apply), &QPushButton::clicked, [=](){
-       updateValues();
+    connect(ui->buttonBox->button(QDialogButtonBox::Apply), &QPushButton::clicked, this, [=](){
+        triggerUpdate();
+        updateValues();
     });
 
     if(AppWindow::showGUI()) {
@@ -395,12 +402,13 @@ void EyeDiagramPlot::updateContextMenu()
     contextmenu->addSeparator();
     auto image = new QAction("Save image...", contextmenu);
     contextmenu->addAction(image);
-    connect(image, &QAction::triggered, [=]() {
-        auto filename = QFileDialog::getSaveFileName(nullptr, "Save plot image", "", "PNG image files (*.png)", nullptr, Preferences::QFileDialogOptions());
+    connect(image, &QAction::triggered, this, [=]() {
+        auto filename = QFileDialog::getSaveFileName(nullptr, "Save plot image", Preferences::getInstance().UISettings.Paths.image, "PNG image files (*.png)", nullptr, Preferences::QFileDialogOptions());
         if(filename.isEmpty()) {
             // aborted selection
             return;
         }
+        Preferences::getInstance().UISettings.Paths.image = QFileInfo(filename).path();
         if(filename.endsWith(".png")) {
             filename.chop(4);
         }
@@ -419,7 +427,7 @@ void EyeDiagramPlot::updateContextMenu()
         if(traces[t]) {
             action->setChecked(true);
         }
-        connect(action, &QAction::toggled, [=](bool active) {
+        connect(action, &QAction::toggled, this, [=](bool active) {
             enableTrace(t, active);
         });
         contextmenu->addAction(action);
@@ -693,7 +701,7 @@ void EyeDiagramPlot::draw(QPainter &p)
 
 bool EyeDiagramPlot::supported(Trace *t)
 {
-    if(t->getDataType() != Trace::DataType::Frequency) {
+    if(t->outputType() != Trace::DataType::Frequency) {
         // wrong domain
         return false;
     }
@@ -715,7 +723,7 @@ QString EyeDiagramPlot::mouseText(QPoint pos)
         auto max = qMax(abs(yAxis.getRangeMax()), abs(yAxis.getRangeMin()));
         auto step = abs(yAxis.getRangeMax() - yAxis.getRangeMin()) / 1000.0;
         significantDigits = floor(log10(max)) - floor(log10(step)) + 1;
-        ret += Unit::ToString(coords.y(), "V", yAxis.Prefixes(), significantDigits) + "\n";
+        ret += Unit::ToString(coords.y(), "V", yAxis.Prefixes(getModel().getSource()), significantDigits) + "\n";
     }
     return ret;
 }
@@ -932,13 +940,13 @@ void EyeThread::run()
             if(eye.linearEdge) {
                 if(next > last) {
                     // rising edge
-                    double max_rise = timestep / (eye.risetime * 1.25);
+                    double max_rise = abs(eye.highlevel - eye.lowlevel) * timestep / (eye.risetime * 1.25);
                     if(next - last > max_rise) {
                         next = last + max_rise;
                     }
                 } else {
                     // falling edge
-                    double max_fall = timestep / (eye.falltime * 1.25);
+                    double max_fall = abs(eye.highlevel - eye.lowlevel) * timestep / (eye.falltime * 1.25);
                     if(next - last < -max_fall) {
                         next = last - max_fall;
                     }

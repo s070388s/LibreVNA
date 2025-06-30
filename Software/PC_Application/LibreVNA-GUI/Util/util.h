@@ -52,6 +52,7 @@ namespace Util {
         return SparamToVSWR(abs(d));
     }
     std::complex<double> SparamToImpedance(std::complex<double> d, std::complex<double> Z0 = 50.0);
+    std::complex<double> ImpedanceToSparam(std::complex<double> Z, std::complex<double> Z0 = 50.0);
     // all these conversions assume series connection of real and imag part
     static inline double SparamToResistance(std::complex<double> d, std::complex<double> Z0 = 50.0) {
         return SparamToImpedance(d, Z0).real();
@@ -70,6 +71,14 @@ namespace Util {
     static inline QColor getFontColorFromBackground(QColor q) {
         auto brightness = q.redF() * 0.299 + q.greenF() * 0.587 + q.blueF() * 0.114;
         return brightness > 0.6 ? Qt::black : Qt::white;
+    }
+
+    template<typename T> void constrain(T &value, const T &min, const T &max) {
+        if(value > max) {
+            value = max;
+        } else if(value < min) {
+            value = min;
+        }
     }
 
     /*
@@ -108,6 +117,9 @@ namespace Util {
         }
         return ret;
     }
+
+    std::complex<double> interpolateMagPhase(const std::complex<double> &from, const std::complex<double> &to, double alpha);
+
     void unwrapPhase(std::vector<double> &phase, unsigned int start_index = 0);
 
     // input values are Y coordinates, assumes evenly spaced linear X values from 0 to input.size() - 1

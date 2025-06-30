@@ -37,8 +37,10 @@ DeviceLog::~DeviceLog()
 
 void DeviceLog::addLine(QString line)
 {
-    // Set color depending on log level
-    QColor color = Qt::black;
+    // Set color depending on log level.
+    // Use theme dependent color for info messages
+    QColor color = QApplication::palette().text().color();
+    // Use fixed colors for other log levels
     if(line.contains(",CRT]")) {
         color = Qt::red;
     } else if(line.contains(",ERR]")) {
@@ -66,8 +68,9 @@ void DeviceLog::clear()
 
 void DeviceLog::on_bToFile_clicked()
 {
-    auto filename = QFileDialog::getSaveFileName(this, "Select file for device log", "", "", nullptr, Preferences::QFileDialogOptions());
+    auto filename = QFileDialog::getSaveFileName(this, "Select file for device log", Preferences::getInstance().UISettings.Paths.packetlog, "", nullptr, Preferences::QFileDialogOptions());
     if(filename.length() > 0) {
+        Preferences::getInstance().UISettings.Paths.packetlog = QFileInfo(filename).path();
         // create file
         ofstream file;
         file.open(filename.toStdString());

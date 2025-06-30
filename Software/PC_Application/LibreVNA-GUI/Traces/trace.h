@@ -21,6 +21,7 @@ class TraceModel;
 class Trace : public TraceMath
 {
     Q_OBJECT
+    friend class TraceEditDialog;
 public:
 
     using Data = TraceMath::Data;
@@ -74,8 +75,8 @@ public:
     void setDeembeddingActive(bool active);
     void clearDeembedding();
 
-    double minX();
-    double maxX();
+    double minX() override;
+    double maxX() override;
     double findExtremum(bool max, double xmin = std::numeric_limits<double>::lowest(), double xmax = std::numeric_limits<double>::max());
     /* Searches for peaks in the trace data and returns the peak frequencies in ascending order.
      * Up to maxPeaks will be returned, with higher level peaks taking priority over lower level peaks.
@@ -95,7 +96,7 @@ public:
     virtual Data getSample(unsigned int index) override;
     virtual Data getInterpolatedSample(double x) override;
     virtual unsigned int numSamples() override;
-    virtual std::vector<Data>& rData() override;
+    virtual std::vector<Data> getData() override;
 
     double getUnwrappedPhase(unsigned int index);
     // returns a (possibly interpolated sample) at a specified frequency/time/power
@@ -166,7 +167,7 @@ public:
 
     const QString &getMathFormula() const;
     void setMathFormula(const QString &newMathFormula);
-    bool mathFormularValid() const;
+    QString getMathFormulaError() const;
 
     // When loading setups, some traces may be used as a math source before they are loaded.
     // If that happens, their hashes are added to a list. Call this function for every new trace

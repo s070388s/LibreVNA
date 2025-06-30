@@ -27,7 +27,7 @@ TraceWaterfall::TraceWaterfall(TraceModel &model, QWidget *parent)
     plotAreaBottom = 0;
 
     xAxis.set(XAxis::Type::Frequency, false, true, 0, 6000000000, 10, false);
-    yAxis.set(YAxis::Type::Magnitude, false, true, -1, 1, 10, false);
+    yAxis.set(YAxis::Type::Magnitude, false, true, YAxis::getDefaultLimitMin(YAxis::Type::Magnitude), YAxis::getDefaultLimitMax(YAxis::Type::Magnitude), 10, false);
     initializeTraceInfo();
 }
 
@@ -95,6 +95,7 @@ void TraceWaterfall::replot()
 
 void TraceWaterfall::fromJSON(nlohmann::json j)
 {
+    parseBaseJSON(j);
     resetWaterfall();
     pixelsPerLine = j.value("pixelsPerLine", pixelsPerLine);
     maxDataSweeps = j.value("maxLines", maxDataSweeps);
@@ -127,7 +128,7 @@ void TraceWaterfall::fromJSON(nlohmann::json j)
 
 nlohmann::json TraceWaterfall::toJSON()
 {
-    nlohmann::json j;
+    nlohmann::json j = getBaseJSON();
     j["pixelsPerLine"] = pixelsPerLine;
     j["direction"] = dir == Direction::TopToBottom ? "TopToBottom" : "BottomToTop";
     j["keepDataBeyondPlot"] = keepDataBeyondPlotSize;
@@ -212,11 +213,12 @@ void TraceWaterfall::updateContextMenu()
     auto image = new QAction("Save image...", contextmenu);
     contextmenu->addAction(image);
     connect(image, &QAction::triggered, [=]() {
-        auto filename = QFileDialog::getSaveFileName(nullptr, "Save plot image", "", "PNG image files (*.png)", nullptr, Preferences::QFileDialogOptions());
+        auto filename = QFileDialog::getSaveFileName(nullptr, "Save plot image", Preferences::getInstance().UISettings.Paths.image, "PNG image files (*.png)", nullptr, Preferences::QFileDialogOptions());
         if(filename.isEmpty()) {
             // aborted selection
             return;
         }
+        Preferences::getInstance().UISettings.Paths.image = QFileInfo(filename).path();
         if(filename.endsWith(".png")) {
             filename.chop(4);
         }
@@ -284,10 +286,10 @@ void TraceWaterfall::draw(QPainter &p)
     }
     QString unit = "";
     if(pref.Graphs.showUnits) {
-        unit = yAxis.Unit();
+        unit = yAxis.Unit(getModel().getSource());
     }
-    QString labelMin = Unit::ToString(yAxis.getRangeMin(), unit, yAxis.Prefixes(), 4);
-    QString labelMax = Unit::ToString(yAxis.getRangeMax(), unit, yAxis.Prefixes(), 4);
+    QString labelMin = Unit::ToString(yAxis.getRangeMin(), unit, yAxis.Prefixes(getModel().getSource()), 4);
+    QString labelMax = Unit::ToString(yAxis.getRangeMax(), unit, yAxis.Prefixes(getModel().getSource()), 4);
     p.setPen(QPen(pref.Graphs.Color.axis, 1));
     p.save();
     p.translate(legendRect.x(), w.height());

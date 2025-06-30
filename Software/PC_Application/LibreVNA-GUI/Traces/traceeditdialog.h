@@ -49,6 +49,8 @@ private slots:
     void okClicked();
 
 private:
+    bool updateMathFormulaStatus();
+    void updateMathFormulaSelectableRows();
     Ui::TraceEditDialog *ui;
     Trace &trace;
     bool VNAtrace;

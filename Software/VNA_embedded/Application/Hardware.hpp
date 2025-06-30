@@ -32,7 +32,6 @@ static constexpr uint32_t TCXOFrequency = 26000000;
 static constexpr uint32_t ExtRefInFrequency = 10000000;
 static constexpr uint32_t ExtRefOut1Frequency = 10000000;
 static constexpr uint32_t ExtRefOut2Frequency = 10000000;
-static constexpr uint32_t SI5351CPLLAlignedFrequency = 832000000;
 static constexpr uint32_t SI5351CPLLConstantFrequency = 800000000;
 static constexpr uint32_t FPGAClkInFrequency = 16000000;
 static constexpr uint32_t DefaultADCSamplerate = 800000;
@@ -41,8 +40,13 @@ static constexpr uint32_t DefaultIF2 = 250000;
 static constexpr uint32_t LO1_minFreq = 25000000;
 static constexpr uint32_t MaxSamples = 130944;
 static constexpr uint32_t MinSamples = 16;
-static constexpr uint32_t PLLRef = 104000000;
+static constexpr uint32_t PLLRef = 100000000;
 static constexpr uint32_t BandSwitchFrequency = 25000000;
+static constexpr uint32_t DefaultLO2 = DefaultIF1 - DefaultIF2;
+static constexpr uint8_t LO2Multiplier = 13;
+static constexpr uint32_t SI5351CPLLAlignedFrequency = DefaultLO2 * LO2Multiplier;
+static constexpr uint16_t DefaultPLLSettlingDelay = 60;
+static constexpr uint16_t MinPLLSettlingDelay = 10;
 
 static constexpr uint8_t DefaultADCprescaler = FPGA::Clockrate / DefaultADCSamplerate;
 static_assert(DefaultADCprescaler * DefaultADCSamplerate == FPGA::Clockrate, "ADCSamplerate can not be reached exactly");
@@ -84,6 +88,7 @@ static constexpr Protocol::DeviceInfo Info = {
 		.limits_maxAmplitudePoints = Cal::maxPoints,
 		.limits_maxFreqHarmonic = 18000000000,
 		.num_ports = 2,
+		.limits_maxDwellTime = 10239,
 };
 
 enum class Mode {
@@ -127,14 +132,24 @@ namespace Ref {
 	// reference won't change until update is called
 	void set(Protocol::ReferenceSettings s);
 	void update();
+	Si5351C::PLLSource getSource();
 }
 
-// Acquisition frequency settings
-void setAcquisitionFrequencies(Protocol::DeviceConfig s);
+// Device configuration settings
+constexpr uint32_t flash_address = Firmware::maxSize + Cal::flash_size; // stored directly behind calibration in flash
+constexpr uint32_t flash_size = 4096; // reserve one sector for now
+
+bool LoadDeviceConfig();
+bool SaveDeviceConfig();
+void SetDefaultDeviceConfig();
+
+void setDeviceConfig(Protocol::DeviceConfig s);
+Protocol::DeviceConfig getDeviceConfig();
 uint32_t getIF1();
 uint32_t getIF2();
 uint32_t getADCRate();
 uint8_t getADCPrescaler();
 uint16_t getDFTPhaseInc();
+uint8_t getPLLSettlingDelay();
 
 }

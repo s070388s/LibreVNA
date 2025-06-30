@@ -108,12 +108,15 @@ void MatchingNetwork::transformDatapoint(DeviceDriver::VNAMeasurement &p)
     }
     // calculate internal reflection at the matching port
     auto portReflectionS = uncorrected.measurements[portReflectionName];
-    auto matchingReflectionS = Sparam(m.forward, p.Z0).m22;
+    auto matchingReflectionS = Sparam(m.forward, p.Z0).get(2,2);
     auto internalPortReflectionS = matchingReflectionS / (1.0 - matchingReflectionS * portReflectionS);
 
     // handle the measurements
     for(auto &meas : p.measurements) {
         QString name = meas.first;
+        if(!name.startsWith("S")) {
+            continue;
+        }
         unsigned int i = name.mid(1,1).toUInt();
         unsigned int j = name.mid(2,1).toUInt();
         if(i == j) {
@@ -122,13 +125,13 @@ void MatchingNetwork::transformDatapoint(DeviceDriver::VNAMeasurement &p)
                 // the port of the matching network itself
                 auto S = Sparam(uncorrected.measurements[name], 1.0, 1.0, 0.0);
                 auto corrected = Sparam(m.forward * ABCDparam(S, p.Z0), p.Z0);
-                p.measurements[name] = corrected.m11;
+                p.measurements[name] = corrected.get(1,1);
             } else {
                 // another reflection measurement
                 try {
-                    auto S = uncorrected.toSparam(i, port);
+                    auto S = uncorrected.toSparam().reduceTo({i, port});
                     auto corrected = Sparam(ABCDparam(S, p.Z0) * m.reverse, p.Z0);
-                    p.fromSparam(corrected, i, port);
+                    p.fromSparam(corrected, {i, port});
                 } catch (...) {
                     // missing measurements, nothing can be done
                 }
@@ -685,7 +688,7 @@ ABCDparam MatchingComponent::parameters(double freq)
         } else {
             auto d = touchstone->interpolate(freq);
             auto Y = Yparam(Sparam(d.S[0], d.S[1], d.S[2], d.S[3]), touchstone->getReferenceImpedance());
-            return ABCDparam(1.0, 0.0, Y.m11, 1.0);
+            return ABCDparam(1.0, 0.0, Y.get(1,1), 1.0);
         }
     default:
         return ABCDparam(1.0, 0.0, 0.0, 1.0);
@@ -764,8 +767,9 @@ void MatchingComponent::mouseDoubleClickEvent(QMouseEvent *e)
     Q_UNUSED(e);
     if(type == Type::DefinedThrough || type == Type::DefinedShunt) {
         // select new touchstone file
-        auto filename = QFileDialog::getOpenFileName(nullptr, "Open measurement file", "", "Touchstone files (*.s2p)", nullptr, Preferences::QFileDialogOptions());
+        auto filename = QFileDialog::getOpenFileName(nullptr, "Open measurement file", Preferences::getInstance().UISettings.Paths.data, "Touchstone files (*.s2p)", nullptr, Preferences::QFileDialogOptions());
         if (!filename.isEmpty()) {
+            Preferences::getInstance().UISettings.Paths.data = QFileInfo(filename).path();
             try {
                 *touchstone = Touchstone::fromFile(filename.toStdString());
             } catch(const std::exception& e) {

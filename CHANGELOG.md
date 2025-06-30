@@ -1,5 +1,66 @@
 # Changelog
 
+## v1.6.4
+
+Critical bugfix for the embedded firmware:
+
+- Fix SPI flash timing, see #315
+
+Minor improvement for the GUI:
+
+- Option to add titles to graphs
+- Show trace names even when only enabled on secondary Y axis
+- Add x axis variable to the available variables for formulas in "from math" traces
+
+
+
+## v1.6.3
+
+Bugfixes and quality of life improvements
+
+- Windows and macOS: add icon to GUI application
+- From math traces:
+  - Validate formula immediately and show error messages
+  - Bugfix: do not reset variable names when opening trace edit dialog again
+  - Fix crash when combining with de-embedding
+- Calibration:
+  - Interpolate points using mag/phase instead of real/imag (minor improvements in accuracy)
+  - Update widget when changing span
+  - Fix race condition when aborting measurement
+  - Reset LibreCAL port settings when aborting measurement
+- Manual improvement: typos and wording
+- Increase USB buffer timeout during sweep (should prevent disconnect when CPU is very busy)
+- Include actual serial of connected device in SCPI \*IDN? response
+- Allow group delay plot for reflection traces
+- Configurable default Y axis limits per Y axis type
+- Fix streaming server output for zero span sweeps
+- Synchronization improvements for compound device
+- Allow name changes for existing modes
+
+## v1.6.2
+
+Mostly bugfixes with only minor new features
+
+- New features:
+  - New SCPI commands:
+    - Temperatures readout
+    - Complete control over manual control via SCPI
+  - Padding option for TDR/DFT to increase resolution
+  - Support for dwell time (adjustable delay before each point in the sweep)
+- Bugfixes:
+  - Fix crash when deleting traces with TDR/DFT math
+  - Spectrum analyzer: Improve tracking generator frequency accuracy
+  - Fix swapped LO and Source unlock LEDs
+  - Reduce amount of mode switches when starting and loading setups (faster loading time)
+  - Use correct units on spectrum analyzer graphs (dBm instead of dB)
+  - Fix Touchstone export file ending
+  - Update eye diagram when changing settings while the trace data does not change
+  - Keep eye diagram trace visible when other trace is deleted
+  - Resolve math references when duplicating "from math" traces
+  - Update LibreCAL API, detect LibreCALs with bad factory coefficients
+  - Fix impedance renormalization (general formulas for parameter conversions)
+  - Fix rare and random phase reversals of S parameter measurements
+
 ## v1.6.1
 
 Mostly bugfixes with only minor new features
