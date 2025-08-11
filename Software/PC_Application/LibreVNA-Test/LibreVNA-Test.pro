@@ -12,6 +12,7 @@ SOURCES +=  \
     ../LibreVNA-GUI/Calibration/LibreCAL/usbdevice.cpp \
     ../LibreVNA-GUI/Calibration/calibration.cpp \
     ../LibreVNA-GUI/Calibration/calibrationmeasurement.cpp \
+    ../LibreVNA-GUI/Calibration/calibrationviewdialog.cpp \
     ../LibreVNA-GUI/Calibration/calkit.cpp \
     ../LibreVNA-GUI/Calibration/calkitdialog.cpp \
     ../LibreVNA-GUI/Calibration/calstandard.cpp \
@@ -154,6 +155,7 @@ SOURCES +=  \
     ../LibreVNA-GUI/streamingserver.cpp \
     ../LibreVNA-GUI/touchstone.cpp \
     ../LibreVNA-GUI/unit.cpp \
+    calibrationtests.cpp \
     ffttests.cpp \
     impedancerenormalizationtests.cpp \
     main.cpp \
@@ -198,6 +200,7 @@ HEADERS += \
     ../LibreVNA-GUI/Calibration/LibreCAL/usbdevice.h \
     ../LibreVNA-GUI/Calibration/calibration.h \
     ../LibreVNA-GUI/Calibration/calibrationmeasurement.h \
+    ../LibreVNA-GUI/Calibration/calibrationviewdialog.h \
     ../LibreVNA-GUI/Calibration/calkit.h \
     ../LibreVNA-GUI/Calibration/calkitdialog.h \
     ../LibreVNA-GUI/Calibration/calstandard.h \
@@ -352,6 +355,7 @@ HEADERS += \
     ../LibreVNA-GUI/streamingserver.h \
     ../LibreVNA-GUI/touchstone.h \
     ../LibreVNA-GUI/unit.h \
+    calibrationtests.h \
     ffttests.h \
     impedancerenormalizationtests.h \
     parametertests.h \
@@ -374,6 +378,7 @@ FORMS += \
     ../LibreVNA-GUI/Calibration/LibreCAL/factoryUpdateDialog.ui \
     ../LibreVNA-GUI/Calibration/LibreCAL/librecaldialog.ui \
     ../LibreVNA-GUI/Calibration/calibrationdialogui.ui \
+    ../LibreVNA-GUI/Calibration/calibrationviewdialog.ui \
     ../LibreVNA-GUI/Calibration/calkitdialog.ui \
     ../LibreVNA-GUI/Calibration/manualcalibrationdialog.ui \
     ../LibreVNA-GUI/CustomWidgets/csvimport.ui \
