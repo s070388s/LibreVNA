@@ -6,6 +6,7 @@
 #include "Util/util.h"
 #include "LibreCAL/librecaldialog.h"
 #include "preferences.h"
+#include "Traces/sparamtraceselectordialog.h"
 
 #include "Tools/Eigen/Dense"
 
@@ -303,6 +304,7 @@ QString Calibration::TypeToString(Calibration::Type type)
     case Type::None: return "None";
     case Type::OSL: return "OSL";
     case Type::SOLT: return "SOLT";
+    case Type::SOLTwithoutRxMatch: return "SOLTwithoutRxMatch";
     case Type::ThroughNormalization: return "ThroughNormalization";
     case Type::TRL: return "TRL";
     case Type::Last: return "Invalid";
@@ -408,7 +410,7 @@ void Calibration::correctTraces(std::map<QString, Trace *> traceSet)
     }
 }
 
-void Calibration::edit()
+void Calibration::edit(TraceModel *traceModel)
 {
     auto d = new QDialog();
     d->setAttribute(Qt::WA_DeleteOnClose);
@@ -510,6 +512,10 @@ void Calibration::edit()
         ui->bDelete->setEnabled(ui->table->currentRow() >= 0);
         ui->bMoveUp->setEnabled(ui->table->currentRow() >= 1);
         ui->bMoveDown->setEnabled(ui->table->currentRow() >= 0 && ui->table->currentRow() < ui->table->rowCount() - 1);
+        auto selected = ui->table->selectionModel()->selectedRows();
+        ui->measure->setEnabled(selected.size() > 0);
+        ui->selectMeasurement->setEnabled(traceModel && selected.size() == 1);
+        ui->clearMeasurement->setEnabled(selected.size() > 0);
     };
 
     auto updateMeasurementTable = [=](){
@@ -619,6 +625,35 @@ void Calibration::edit()
         emit startMeasurements(m);
     });
 
+    connect(ui->selectMeasurement, &QPushButton::clicked, [=](){
+        auto selected = ui->table->selectionModel()->selectedRows();
+        if(selected.size() != 1) {
+            InformationBox::ShowError("Unable to select measurement", "Exactly one measurement must be selected");
+            return;
+        }
+        // figure out which S parameters we need
+        auto meas = measurements[selected[0].row()];
+        auto ports = meas->getPorts();
+        if(ports.size() == 0) {
+            InformationBox::ShowError("Unable to select measurement", "Selecting measurements for this type of calibration measurement is not supported");
+            return;
+        }
+        auto selector = new SParamTraceSelectorDialog(*traceModel, ports);
+        connect(selector, &SParamTraceSelectorDialog::tracesSelected, d, [=](std::vector<DeviceDriver::VNAMeasurement> traceMeasurements){
+            clearMeasurements({meas});
+            for(const auto &tm : traceMeasurements) {
+                addMeasurements({meas}, tm);
+            }
+            updateMeasurementTable();
+            updateCalibrationList();
+        });
+        selector->show();
+    });
+    if(!traceModel) {
+        // can not select a measurement if no trace model is supplied
+        ui->selectMeasurement->setEnabled(false);
+    }
+
     connect(this, &Calibration::measurementsUpdated, d, [=](){
         updateMeasurementTable();
         updateCalibrationList();
@@ -665,7 +700,7 @@ void Calibration::edit()
         });
     });
 
-    QObject::connect(ui->table, &QTableWidget::currentCellChanged, updateTableEditButtons);
+    QObject::connect(ui->table, &QTableWidget::itemSelectionChanged, updateTableEditButtons);
 
     auto addMenu = new QMenu();
     for(auto t : CalibrationMeasurement::Base::availableTypes()) {
@@ -807,6 +842,17 @@ Calibration::Point Calibration::computeSOLT(double f)
         }
     }
     return point;
+}
+
+Calibration::Point Calibration::computeSOLTwithoutRxMatch(double f) {
+    // This is very similar to SOLT but it assumes that receiver matching at the VNA is perfect.
+    // It can be used if the through calibration standard is very lossy which would result in
+    // very noisy values for the receiver match
+    auto p = computeSOLT(f);
+    for(auto &l : p.L) {
+        fill(l.begin(), l.end(), 0.0);
+    }
+    return p;
 }
 
 Calibration::Point Calibration::computeThroughNormalization(double f)
@@ -1736,6 +1782,7 @@ bool Calibration::canCompute(Calibration::CalType type, double *startFreq, doubl
     case Type::None:
         return true; // Always possible to reset the calibration
     case Type::SOLT:
+    case Type::SOLTwithoutRxMatch:
         // through measurements between all ports
         for(unsigned int i=1;i<=type.usedPorts.size();i++) {
             for(unsigned int j=i+1;j<=type.usedPorts.size();j++) {
@@ -1829,6 +1876,7 @@ bool Calibration::compute(Calibration::CalType type)
             switch(type.type) {
             case Type::OSL: p = computeOSL(f); break;
             case Type::SOLT: p = computeSOLT(f); break;
+            case Type::SOLTwithoutRxMatch: p = computeSOLTwithoutRxMatch(f); break;
             case Type::ThroughNormalization: p = computeThroughNormalization(f); break;
             case Type::TRL: p = computeTRL(f); break;
             case Type::None:
@@ -1858,6 +1906,7 @@ int Calibration::minimumPorts(Calibration::Type type)
     switch(type) {
     case Type::OSL: return 1;
     case Type::SOLT: return 1;
+    case Type::SOLTwithoutRxMatch: return 2;
     case Type::ThroughNormalization: return 2;
     case Type::TRL: return 2;
     case Type::None:

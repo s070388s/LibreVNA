@@ -22,6 +22,7 @@ public:
         None,
         OSL,
         SOLT,
+        SOLTwithoutRxMatch,
         ThroughNormalization,
         TRL,
         Last,
@@ -46,7 +47,7 @@ public:
     void correctTraces(std::map<QString, Trace*> traceSet);
 
     // Starts the calibration edit dialog, allowing the user to make/delete measurements
-    void edit();
+    void edit(TraceModel *traceModel = nullptr);
 
     Calkit& getKit();
 
@@ -163,6 +164,7 @@ private:
     Point createInitializedPoint(double f);
     Point computeOSL(double f);
     Point computeSOLT(double f);
+    Point computeSOLTwithoutRxMatch(double f);
     Point computeThroughNormalization(double f);
     Point computeTRL(double f);
 
