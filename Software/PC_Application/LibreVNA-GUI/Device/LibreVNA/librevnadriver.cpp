@@ -206,9 +206,26 @@ LibreVNADriver::LibreVNADriver()
     });
     specificActions.push_back(freqcal);
 
-    sep = new QAction();
-    sep->setSeparator(true);
-    specificActions.push_back(sep);
+    auto internalAlignment = new QAction("Run Internal Alignment");
+    connect(internalAlignment, &QAction::triggered, this, [=](){
+        emit acquireControl();
+        Protocol::PacketInfo p;
+        p.type = Protocol::PacketType::PerformAction;
+        p.performAction.action = Protocol::Action::InternalAlignment;
+        SendPacket(p, [=](TransmissionResult res){
+            if(res == TransmissionResult::Ack) {
+                InformationBox::ShowMessage("Success", "Internal alignment completed");
+            } else {
+                InformationBox::ShowError("Error", "Running internal alignment failed");
+            }
+            emit releaseControl();
+        }, 5000);
+    });
+    specificActions.push_back(internalAlignment);
+
+    auto sep2 = new QAction();
+    sep2->setSeparator(true);
+    specificActions.push_back(sep2);
 
     auto log = new QAction("View Packet Log");
     connect(log, &QAction::triggered, this, [=](){
@@ -216,6 +233,14 @@ LibreVNADriver::LibreVNADriver()
        d->show();
     });
     specificActions.push_back(log);
+
+    // set available actions for each hardware version
+    availableActions[0x01] = {manual, config, update, sep, srccal, recvcal, freqcal, sep2, log};
+    availableActions[0xD0] = {manual, update, sep, srccal, recvcal, freqcal, sep2, log};
+    availableActions[0xE0] = {manual, update, sep, srccal, recvcal, freqcal, internalAlignment, sep2, log};
+    availableActions[0xFD] = {manual, update, sep, srccal, recvcal, freqcal, sep2, log};
+    availableActions[0xFE] = {manual, config, update, sep, srccal, recvcal, freqcal, sep2, log};
+    availableActions[0xFF] = {manual, config, update, sep, srccal, recvcal, freqcal, sep2, log};
 
     // Create driver specific commands
     specificSCPIcommands.push_back(new SCPICommand("DEVice:INFo:TEMPeratures", nullptr, [=](QStringList) -> QString {
@@ -285,6 +310,17 @@ std::set<DeviceDriver::Flag> LibreVNADriver::getFlags()
             ret.insert(Flag::Overload);
         }
         break;
+    case 0xD0:
+        if(!lastStatus.VD0.source_locked || !lastStatus.VD0.LO_locked) {
+            ret.insert(Flag::Unlocked);
+        }
+        if(lastStatus.VD0.unlevel) {
+            ret.insert(Flag::Unlevel);
+        }
+        if(lastStatus.VD0.ADC_overload) {
+            ret.insert(Flag::Overload);
+        }
+        break;
     case 0xFE:
         if(!lastStatus.VFE.source_locked || !lastStatus.VFE.LO_locked) {
             ret.insert(Flag::Unlocked);
@@ -326,6 +362,19 @@ QString LibreVNADriver::getStatus()
         } else {
             ret.append("Internal");
             if(lastStatus.V1.extRefAvailable) {
+                ret.append(" (External available)");
+            }
+        }
+        break;
+    case 0xD0:
+        ret.append(" Temps MCU: "+QString::number(lastStatus.VD0.temp_MCU)+"°C");
+        ret.append(" Supply: "+Unit::ToString((float) lastStatus.VD0.supply_voltage / 1000.0, "V", "m ", 3) + " " + Unit::ToString((float) lastStatus.VD0.supply_current / 1000.0, "A", "m ", 3));
+        ret.append(" Reference:");
+        if(lastStatus.VD0.extRefInUse) {
+            ret.append("External");
+        } else {
+            ret.append("Internal");
+            if(lastStatus.VD0.extRefAvailable) {
                 ret.append(" (External available)");
             }
         }
@@ -713,6 +762,8 @@ void LibreVNADriver::handleReceivedPacket(const Protocol::PacketInfo &packet)
         info.Limits.SA.maxdBm = (double) packet.info.limits_cdbm_max / 100;
 
         limits_maxAmplitudePoints = packet.info.limits_maxAmplitudePoints;
+
+        updateActionVisibility(hardwareVersion);
         emit InfoUpdated();
     }
         break;
@@ -777,10 +828,32 @@ QString LibreVNADriver::hardwareVersionToString(uint8_t version)
 {
     switch(version) {
     case 0x01: return "1";
+    case 0xD0: return "HAR0";
     case 0xE0: return "SAP1";
     case 0xFE: return "P2";
     case 0xFF: return "PT";
     default: return "Unknown";
+    }
+}
+
+void LibreVNADriver::updateActionVisibility(uint8_t hardwareVersion)
+{
+    // only show actions for the correct hardware version
+    if(availableActions.contains(hardwareVersion)) {
+        // hide all actions
+        for(auto a : specificActions) {
+            a->setVisible(false);
+        }
+        // show the relevant actions
+        for(auto a : availableActions[hardwareVersion]) {
+            a->setVisible(true);
+        }
+    } else {
+        // the hardware version is unknown. This should not happen but just in case
+        // we set all actions to visible
+        for(auto a : specificActions) {
+            a->setVisible(true);
+        }
     }
 }
 

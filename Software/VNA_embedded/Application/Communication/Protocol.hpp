@@ -249,6 +249,18 @@ using DeviceStatus = struct _deviceStatus {
             uint16_t temp_eCal; // in 1/100 °C
             uint16_t power_heater; // in mW
         } VFE;
+        struct {
+            uint8_t extRefAvailable:1;
+            uint8_t extRefInUse:1;
+            uint8_t FPGA_configured:1;
+            uint8_t source_locked:1;
+            uint8_t LO_locked:1;
+            uint8_t ADC_overload:1;
+            uint8_t unlevel:1;
+            uint8_t temp_MCU;
+            uint16_t supply_voltage;
+            uint16_t supply_current;
+        } VD0;
 	};
 };
 
@@ -544,6 +556,15 @@ using DeviceConfig = struct _deviceconfig {
 	};
 };
 
+enum class Action : uint16_t {
+    InternalAlignment = 0x0000,
+};
+
+using PerformAction = struct _performaction {
+    Action action;
+    uint8_t additional_information[128];
+};
+
 enum class PacketType : uint8_t {
 	None = 0,
 	//Datapoint = 1, // Deprecated, replaced by VNADatapoint
@@ -577,7 +598,8 @@ enum class PacketType : uint8_t {
 	ClearTrigger = 29,
 	StopStatusUpdates = 30,
 	StartStatusUpdates = 31,
-	InitiateSweep = 32
+    InitiateSweep = 32,
+    PerformAction = 33,
 };
 
 using PacketInfo = struct _packetinfo {
@@ -597,6 +619,7 @@ using PacketInfo = struct _packetinfo {
         AmplitudeCorrectionPoint amplitudePoint;
         FrequencyCorrection frequencyCorrection;
         DeviceConfig deviceConfig;
+        PerformAction performAction;
         /*
          * When encoding: Pointer may go invalid after call to EncodePacket
          * When decoding: VNADatapoint is created on heap by DecodeBuffer, freeing is up to the caller
