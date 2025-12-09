@@ -69,6 +69,10 @@ VNA::VNA(AppWindow *window, QString name)
     calWaitFirst = false;
     calDialog = nullptr;
 
+    lastFreq = 0.0;
+    lastPower = 0.0;
+    lastTime = 0.0;
+
     changingSettings = false;
     settings.sweepType = SweepType::Frequency;
     settings.zerospan = false;
@@ -880,6 +884,7 @@ nlohmann::json VNA::toJSON()
     sweep["power"] = power;
     sweep["points"] = settings.npoints;
     sweep["IFBW"] = settings.bandwidth;
+    sweep["averages"] = averages;
     j["sweep"] = sweep;
 
     j["traces"] = traceModel.toJSON();
@@ -917,6 +922,7 @@ void VNA::fromJSON(nlohmann::json j)
         // restore sweep settings, keep current value as default in case of missing entry
         SetPoints(sweep.value("points", settings.npoints));
         SetIFBandwidth(sweep.value("IFBW", settings.bandwidth));
+        SetAveraging(sweep.value("averages", averages));
         if(sweep.contains("frequency")) {
             auto freq = sweep["frequency"];
             SetStartFreq(freq.value("start", settings.Freq.start));
@@ -1014,6 +1020,10 @@ void VNA::NewDatapoint(DeviceDriver::VNAMeasurement m)
             break;
         }
     }
+
+    lastFreq = m_avg.frequency;
+    lastPower = m_avg.dBm;
+    lastTime = (double) m_avg.us / 1000000;
 
     window->addStreamingData(m_avg, AppWindow::VNADataType::Raw, settings.zerospan);
 
@@ -1246,6 +1256,7 @@ void VNA::SetLogSweep(bool log)
 {
     if(settings.Freq.logSweep != log) {
         settings.Freq.logSweep = log;
+        ConstrainAndUpdateFrequencies();
         emit logSweepChanged(log);
         SettingsChanged();
     }
@@ -1592,6 +1603,15 @@ void VNA::SetupSCPI()
     }, [=](QStringList) -> QString {
         return singleSweep ? SCPI::getResultName(SCPI::Result::True) : SCPI::getResultName(SCPI::Result::False);
     }));
+    scpi_acq->add(new SCPICommand("FREQuency", nullptr, [=](QStringList) -> QString {
+        return QString::number(lastFreq);
+    }));
+    scpi_acq->add(new SCPICommand("POWer", nullptr, [=](QStringList) -> QString {
+        return QString::number(lastPower);
+    }));
+    scpi_acq->add(new SCPICommand("TIME", nullptr, [=](QStringList) -> QString {
+        return QString::number(lastTime);
+    }));
     auto scpi_stim = new SCPINode("STIMulus");
     SCPINode::add(scpi_stim);
     scpi_stim->add(new SCPICommand("LVL", [=](QStringList params) -> QString {
@@ -1627,6 +1647,12 @@ void VNA::SetupSCPI()
 
 void VNA::ConstrainAndUpdateFrequencies()
 {
+    if(settings.sweepType == SweepType::Frequency && settings.Freq.logSweep) {
+        if(settings.Freq.start <= 0) {
+            // start frequency must be positive, force it to 1 Hz
+            settings.Freq.start = 1.0;
+        }
+    }
     if(settings.Freq.stop > DeviceDriver::getInfo(window->getDevice()).Limits.VNA.maxFreq) {
         settings.Freq.stop = DeviceDriver::getInfo(window->getDevice()).Limits.VNA.maxFreq;
     }

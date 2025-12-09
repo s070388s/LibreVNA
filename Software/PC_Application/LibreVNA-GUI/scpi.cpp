@@ -297,7 +297,7 @@ bool SCPINode::addDoubleParameter(QString name, double &param, bool gettable, bo
             return SCPI::getResultName(SCPI::Result::Error);
         }
     } : (std::function<QString(QStringList)>) nullptr;
-    auto query = gettable ? [=](QStringList params) -> QString {
+    auto query = gettable ? [&param](QStringList params) -> QString {
         Q_UNUSED(params)
         return QString::number(param);
     } : (std::function<QString(QStringList)>) nullptr;
@@ -340,6 +340,26 @@ bool SCPINode::addBoolParameter(QString name, bool &param, bool gettable, bool s
     auto query = gettable ? [=](QStringList params) -> QString {
         Q_UNUSED(params)
         return param ? SCPI::getResultName(SCPI::Result::True) : SCPI::getResultName(SCPI::Result::False);
+    } : (std::function<QString(QStringList)>) nullptr;
+    return add(new SCPICommand(name, cmd, query));
+}
+
+bool SCPINode::addStringParameter(QString name, QString &param, bool gettable, bool settable, std::function<void ()> setCallback)
+{
+    auto cmd = settable ? [&param, setCallback](QStringList params) -> QString {
+        if(params.size() == 1) {
+            param = params[0];
+            if(setCallback) {
+                setCallback();
+            }
+            return SCPI::getResultName(SCPI::Result::Empty);
+        } else {
+            return SCPI::getResultName(SCPI::Result::Error);
+        }
+    } : (std::function<QString(QStringList)>) nullptr;
+    auto query = gettable ? [=](QStringList params) -> QString {
+        Q_UNUSED(params)
+        return param;
     } : (std::function<QString(QStringList)>) nullptr;
     return add(new SCPICommand(name, cmd, query));
 }
@@ -548,16 +568,43 @@ QString SCPINode::parse(QString cmd, SCPINode* &lastNode)
         return SCPI::getResultName(SCPI::Result::Error);
     } else {
         // no more levels, search for command
-        auto params = cmd.split(" ");
-        auto cmd = params.front();
+        QStringList params;
+        params.append("");
+        bool inQuotes = false;
+        for(unsigned int i=0;i<cmd.length();i++) {
+            if(cmd[i] == '\\') {
+                // escape character, ignore
+                continue;
+            }
+            // check if we are starting/stopping quotes
+            if(cmd[i] == '"' || cmd[i] == '\'') {
+                // check whether quotes are escaped
+                if(i == 0 || cmd[i-1] != '\\') {
+                    inQuotes = !inQuotes;
+                    continue;
+                }
+            }
+            if(inQuotes) {
+                params.back().append(cmd[i]);
+            } else {
+                // not in quotes, handle splitting by space
+                if(cmd[i] == ' ') {
+                    if(params.back().length() > 0)
+                    params.append("");
+                } else {
+                    params.back().append(cmd[i]);
+                }
+            }
+        }
+        // remove command name
         params.pop_front();
         bool isQuery = false;
-        if (cmd[cmd.size()-1]=='?') {
+        if (cmdName[cmdName.size()-1]=='?') {
             isQuery = true;
-            cmd.chop(1);
+            cmdName.chop(1);
         }
         for(auto c : commands) {
-            if(SCPI::match(c->leafName(), cmd.toUpper())) {
+            if(SCPI::match(c->leafName(), cmdName.toUpper())) {
                 // save current node in case of non-root for the next command
                 lastNode = this;
                 if(c->convertToUppercase()) {

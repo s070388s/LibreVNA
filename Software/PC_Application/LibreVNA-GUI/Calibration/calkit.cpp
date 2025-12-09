@@ -16,13 +16,47 @@ using json = nlohmann::json;
 using namespace std;
 
 Calkit::Calkit()
-    : SCPINode("KIT")
+    : SCPINode("KIT"), scpi_std("STAndard")
 {
     // set default values
+    filename = "";
     for(auto e : descr) {
         e.var.setValue(e.def);
     }
 
+    add(new SCPICommand("MANufacturer", [=](QStringList params) -> QString {
+        if(params.size() != 1 ) {
+            // no new value given
+            return SCPI::getResultName(SCPI::Result::Error);
+        }
+        manufacturer = params[0];
+        return SCPI::getResultName(SCPI::Result::Empty);
+    }, [=](QStringList) -> QString {
+        return manufacturer;
+    }, false));
+    add(new SCPICommand("SERial", [=](QStringList params) -> QString {
+        if(params.size() != 1 ) {
+            // no new value given
+            return SCPI::getResultName(SCPI::Result::Error);
+        }
+        serialnumber = params[0];
+        return SCPI::getResultName(SCPI::Result::Empty);
+    }, [=](QStringList) -> QString {
+        return serialnumber;
+    }, false));
+    add(new SCPICommand("DESCription", [=](QStringList params) -> QString {
+        if(params.size() != 1 ) {
+            // no new value given
+            return SCPI::getResultName(SCPI::Result::Error);
+        }
+        description = params[0];
+        return SCPI::getResultName(SCPI::Result::Empty);
+    }, [=](QStringList) -> QString {
+        return description;
+    }, false));
+    add(new SCPICommand("FILEname", nullptr, [=](QStringList) -> QString {
+        return filename;
+    }));
     add(new SCPICommand("SAVE", [=](QStringList params) -> QString {
         if(params.size() != 1 ) {
             // no filename given or no calibration active
@@ -30,19 +64,65 @@ Calkit::Calkit()
         }
         toFile(params[0]);
         return SCPI::getResultName(SCPI::Result::Empty);
-    }, nullptr));
+    }, nullptr, false));
     add(new SCPICommand("LOAD", nullptr, [=](QStringList params) -> QString {
         if(params.size() != 1) {
             // no filename given or no calibration active
             return SCPI::getResultName(SCPI::Result::False);
         }
-        try {
-            *this = fromFile(params[0]);
+        if(this->fromFile(params[0])) {
             return SCPI::getResultName(SCPI::Result::True);
-        } catch (runtime_error &e) {
+        } else {
             return SCPI::getResultName(SCPI::Result::False);
         }
+    }, false));
+    scpi_std.add(new SCPICommand("CLEAR", [=](QStringList params) -> QString {
+        Q_UNUSED(params);
+        setIdealDefault();
+        return SCPI::getResultName(SCPI::Result::Empty);
+    }, nullptr));
+    scpi_std.add(new SCPICommand("NUMber", nullptr, [=](QStringList params) -> QString {
+        Q_UNUSED(params);
+        return QString::number(standards.size());
     }));
+    scpi_std.add(new SCPICommand("NEW", [=](QStringList params) -> QString {
+        if(params.size() != 2) {
+            return SCPI::getResultName(SCPI::Result::Error);
+        }
+        auto type = CalStandard::Virtual::TypeFromString(params[0]);
+        if(type == CalStandard::Virtual::Type::Last) {
+            return SCPI::getResultName(SCPI::Result::Error);
+        }
+        auto s = CalStandard::Virtual::create(type);
+        if(!s) {
+            return SCPI::getResultName(SCPI::Result::Error);
+        }
+        s->setName(params[1]);
+        addStandard(s);
+        return SCPI::getResultName(SCPI::Result::Empty);
+    }, nullptr, false));
+    scpi_std.add(new SCPICommand("DELete", [=](QStringList params) -> QString {
+        unsigned long long index;
+        if(!SCPI::paramToULongLong(params, 0, index)) {
+            return SCPI::getResultName(SCPI::Result::Error);
+        }
+        if(index < 1 || index > standards.size()) {
+            return SCPI::getResultName(SCPI::Result::Error);
+        }
+        removeStandard(standards[index-1]);
+        return SCPI::getResultName(SCPI::Result::Empty);
+    }, nullptr));
+    scpi_std.add(new SCPICommand("TYPE", nullptr, [=](QStringList params) -> QString {
+        unsigned long long index = 0;
+        if(!SCPI::paramToULongLong(params, 0, index)) {
+            return SCPI::getResultName(SCPI::Result::Error);
+        }
+        if(index < 1 || index > standards.size()) {
+            return SCPI::getResultName(SCPI::Result::Error);
+        }
+        return CalStandard::Virtual::TypeToString(standards[index-1]->getType()).replace(" ", "_");
+    }));
+    add(&scpi_std);
 }
 
 void Calkit::toFile(QString filename)
@@ -57,6 +137,7 @@ void Calkit::toFile(QString filename)
     file.open(filename.toStdString());
     file << setw(4) << toJSON() << endl;
     file.close();
+    this->filename = filename;
 }
 
 static QString readLine(ifstream &file) {
@@ -65,27 +146,29 @@ static QString readLine(ifstream &file) {
     return QString::fromStdString(line).simplified();
 }
 
-Calkit Calkit::fromFile(QString filename)
+bool Calkit::fromFile(QString filename)
 {
-    qDebug() << "Opening calkit to file" << filename;
+    qDebug() << "Opening calkit from file" << filename;
 
-    auto c = Calkit();
     ifstream file;
     file.open(filename.toStdString());
     if(!file.is_open()) {
-        throw runtime_error("Unable to open file");
+        qWarning() << "Unable to open file: " << filename;
+        return false;
     }
 
     json j;
     try {
         file >> j;
     } catch (exception &e) {
-        throw runtime_error("JSON parsing error: " + string(e.what()));
+        qWarning() << "JSON parsing error: " << QString(e.what());
+        return false;
     }
-    c.clearStandards();
+    clearStandards();
+    this->filename = "";
     if(j.contains("standards")) {
         qDebug() << "new JSON format detected";
-        c.fromJSON(j);
+        fromJSON(j);
     } else {
         // older format is used
         struct {
@@ -133,7 +216,7 @@ Calkit Calkit::fromFile(QString filename)
         if(j.contains("SOLT")) {
             qDebug() << "old JSON format detected";
             // calkit file uses json format, parse
-            Savable::parseJSON(j, c.descr);
+            Savable::parseJSON(j, descr);
             const std::vector<Savable::SettingDescription> descr_deprecated = {{
                 {&SOLT.open_m.Z0, "SOLT.Open.Param.Z0", 50.0},
                 {&SOLT.open_m.delay, "SOLT.Open.Param.Delay", 0.0},
@@ -286,7 +369,7 @@ Calkit Calkit::fromFile(QString filename)
             ts.fromFile(SOLT.open_m.file.toStdString());
             open_m->setMeasurement(ts, SOLT.open_m.Sparam);
         }
-        c.addStandard(open_m);
+        addStandard(open_m);
         if(SOLT.separate_male_female) {
             auto open_f = new CalStandard::Open("Default female standard", SOLT.open_f.Z0, SOLT.open_f.delay, SOLT.open_f.loss, SOLT.open_f.C0, SOLT.open_f.C1, SOLT.open_f.C2, SOLT.open_f.C3);
             if(SOLT.open_f.useMeasurements) {
@@ -294,7 +377,7 @@ Calkit Calkit::fromFile(QString filename)
                 ts.fromFile(SOLT.open_f.file.toStdString());
                 open_m->setMeasurement(ts, SOLT.open_f.Sparam);
             }
-            c.addStandard(open_f);
+            addStandard(open_f);
         }
 
         auto short_m = new CalStandard::Short(SOLT.separate_male_female ? "Default male standard" : "Default standard", SOLT.short_m.Z0, SOLT.short_m.delay, SOLT.short_m.loss, SOLT.short_m.L0, SOLT.short_m.L1, SOLT.short_m.L2, SOLT.short_m.L3);
@@ -303,7 +386,7 @@ Calkit Calkit::fromFile(QString filename)
             ts.fromFile(SOLT.short_m.file.toStdString());
             short_m->setMeasurement(ts, SOLT.short_m.Sparam);
         }
-        c.addStandard(short_m);
+        addStandard(short_m);
         if(SOLT.separate_male_female) {
             auto short_f = new CalStandard::Short("Default female standard", SOLT.short_f.Z0, SOLT.short_f.delay, SOLT.short_f.loss, SOLT.short_f.L0, SOLT.short_f.L1, SOLT.short_f.L2, SOLT.short_f.L3);
             if(SOLT.short_f.useMeasurements) {
@@ -311,7 +394,7 @@ Calkit Calkit::fromFile(QString filename)
                 ts.fromFile(SOLT.short_f.file.toStdString());
                 short_m->setMeasurement(ts, SOLT.short_f.Sparam);
             }
-            c.addStandard(short_f);
+            addStandard(short_f);
         }
 
         auto load_m = new CalStandard::Load(SOLT.separate_male_female ? "Default male standard" : "Default standard", SOLT.load_m.Z0, SOLT.load_m.delay, 0.0, SOLT.load_m.resistance, SOLT.load_m.Cparallel, SOLT.load_m.Lseries, SOLT.loadModelCFirst);
@@ -320,7 +403,7 @@ Calkit Calkit::fromFile(QString filename)
             ts.fromFile(SOLT.load_m.file.toStdString());
             load_m->setMeasurement(ts, SOLT.load_m.Sparam);
         }
-        c.addStandard(load_m);
+        addStandard(load_m);
         if(SOLT.separate_male_female) {
             auto load_f = new CalStandard::Load("Default female standard", SOLT.load_m.Z0, SOLT.load_f.delay, 0.0, SOLT.load_f.resistance, SOLT.load_f.Cparallel, SOLT.load_f.Lseries, SOLT.loadModelCFirst);
             if(SOLT.load_f.useMeasurements) {
@@ -328,7 +411,7 @@ Calkit Calkit::fromFile(QString filename)
                 ts.fromFile(SOLT.load_f.file.toStdString());
                 load_m->setMeasurement(ts, SOLT.load_f.Sparam);
             }
-            c.addStandard(load_f);
+            addStandard(load_f);
         }
 
         auto through = new CalStandard::Through("Default standard", SOLT.Through.Z0, SOLT.Through.delay, SOLT.Through.loss);
@@ -337,7 +420,7 @@ Calkit Calkit::fromFile(QString filename)
             ts.fromFile(SOLT.Through.file.toStdString());
             through->setMeasurement(ts, SOLT.Through.Sparam1, SOLT.Through.Sparam2);
         }
-        c.addStandard(through);
+        addStandard(through);
 
         InformationBox::ShowMessage("Loading calkit file", "The file \"" + filename + "\" is stored in a deprecated"
                      " calibration kit format. Future versions of this application might not support"
@@ -345,8 +428,10 @@ Calkit Calkit::fromFile(QString filename)
     }
 
     file.close();
+    this->filename = filename;
+    updateSCPINames();
 
-    return c;
+    return true;
 }
 
 void Calkit::edit(std::function<void (void)> updateCal)
@@ -364,10 +449,24 @@ void Calkit::edit(std::function<void (void)> updateCal)
 
 void Calkit::clearStandards()
 {
-    for(auto s : standards) {
-        delete s;
+    while(standards.size() > 0) {
+        removeStandard(standards[0]);
     }
-    standards.clear();
+}
+
+void Calkit::updateSCPINames()
+{
+    // Need to remove all standards from the subnode list first, otherwise
+    // name changes wouldn't work due to temporarily name collisions
+    for(auto &s : standards) {
+        scpi_std.remove(s);
+    }
+    unsigned int i=1;
+    for(auto &s : standards) {
+        s->changeName(QString::number(i));
+        scpi_std.add(s);
+        i++;
+    }
 }
 
 std::vector<CalStandard::Virtual *> Calkit::getStandards() const
@@ -391,6 +490,14 @@ void Calkit::addStandard(CalStandard::Virtual *s)
         }
     }
     standards.push_back(s);
+    updateSCPINames();
+}
+
+void Calkit::removeStandard(CalStandard::Virtual *s)
+{
+    standards.erase(std::remove(standards.begin(), standards.end(), s), standards.end());
+    delete s;
+    updateSCPINames();
 }
 
 nlohmann::json Calkit::toJSON()
@@ -411,6 +518,7 @@ nlohmann::json Calkit::toJSON()
 void Calkit::fromJSON(nlohmann::json j)
 {
     clearStandards();
+    filename = "";
     Savable::parseJSON(j, descr);
     for(auto js : j["standards"]) {
         if(!js.contains("type") || !js.contains("params")) {
@@ -426,6 +534,7 @@ void Calkit::fromJSON(nlohmann::json j)
         s->fromJSON(js["params"]);
         addStandard(s);
     }
+    updateSCPINames();
 }
 
 void Calkit::setIdealDefault()
@@ -437,4 +546,5 @@ void Calkit::setIdealDefault()
     addStandard(new CalStandard::Short("Ideal Short Standard", 50.0, 0, 0, 0, 0, 0, 0));
     addStandard(new CalStandard::Load("Ideal Load Standard", 50.0, 0, 0, 50.0, 0, 0));
     addStandard(new CalStandard::Through("Ideal Through Standard", 50.0, 0, 0));
+    updateSCPINames();
 }

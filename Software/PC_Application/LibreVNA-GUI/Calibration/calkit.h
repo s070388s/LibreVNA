@@ -19,15 +19,8 @@ class Calkit : public Savable, public SCPINode
     friend class LibreCALDialog;
 public:
     Calkit();
-    Calkit(const Calkit&) = default;
-    Calkit& operator=(const Calkit& other)
-    {
-        this->manufacturer = other.manufacturer;
-        this->serialnumber = other.serialnumber;
-        this->description = other.description;
-        this->standards = other.standards;
-        return *this;
-    }
+    Calkit(const Calkit&) = delete;
+    Calkit& operator= (const Calkit&) = delete;
 
     class SOLT {
     public:
@@ -44,11 +37,12 @@ public:
     };
 
     void toFile(QString filename);
-    static Calkit fromFile(QString filename);
+    bool fromFile(QString filename);
     void edit(std::function<void(void)> updateCal = nullptr);
 
     std::vector<CalStandard::Virtual *> getStandards() const;
     void addStandard(CalStandard::Virtual* s);
+    void removeStandard(CalStandard::Virtual* s);
 
     virtual nlohmann::json toJSON() override;
     virtual void fromJSON(nlohmann::json j) override;
@@ -57,7 +51,10 @@ public:
 
 private:
     void clearStandards();
+    void updateSCPINames();
     QString manufacturer, serialnumber, description;
+    QString filename;
+    SCPINode scpi_std;
     std::vector<CalStandard::Virtual*> standards;
 
     const std::vector<Savable::SettingDescription> descr = {{

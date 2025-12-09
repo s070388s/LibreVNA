@@ -64,6 +64,9 @@ SpectrumAnalyzer::SpectrumAnalyzer(AppWindow *window, QString name)
     normalize.measure = nullptr;
     normalize.enable = nullptr;
 
+    lastFreq = 0.0;
+    lastTime = 0.0;
+
     configurationTimer.setSingleShot(true);
     connect(&configurationTimer, &QTimer::timeout, this, [=](){
         ConfigureDevice();
@@ -396,6 +399,7 @@ nlohmann::json SpectrumAnalyzer::toJSON()
     freq["stop"] = settings.freqStop;
     sweep["frequency"] = freq;
     sweep["single"] = singleSweep;
+    sweep["averages"] = averages;
     nlohmann::json acq;
     acq["RBW"] = settings.RBW;
     acq["window"] = WindowToString((DeviceDriver::SASettings::Window) settings.window).toStdString();
@@ -502,6 +506,7 @@ void SpectrumAnalyzer::fromJSON(nlohmann::json j)
             EnableNormalization(correctSize);
         }
         SetSingleSweep(sweep.value("single", singleSweep));
+        SetAveraging(sweep.value("averages", averages));
     }
 }
 
@@ -584,6 +589,9 @@ void SpectrumAnalyzer::NewDatapoint(DeviceDriver::SAMeasurement m)
         qWarning() << "Got point" << m_avg.pointNum << "but last received point was" << lastPoint << "("<<(m_avg.pointNum-lastPoint-1)<<"missed points)";
     }
     lastPoint = m_avg.pointNum;
+
+    lastFreq = m_avg.frequency;
+    lastTime = (double) m_avg.us / 1000000;
 }
 
 void SpectrumAnalyzer::SettingsChanged()
@@ -1101,6 +1109,12 @@ void SpectrumAnalyzer::SetupSCPI()
         }
     }, [=](QStringList) -> QString {
         return singleSweep ? SCPI::getResultName(SCPI::Result::True): SCPI::getResultName(SCPI::Result::False);
+    }));
+    scpi_acq->add(new SCPICommand("FREQuency", nullptr, [=](QStringList) -> QString {
+        return QString::number(lastFreq);
+    }));
+    scpi_acq->add(new SCPICommand("TIME", nullptr, [=](QStringList) -> QString {
+        return QString::number(lastTime);
     }));
     auto scpi_tg = new SCPINode("TRACKing");
     SCPINode::add(scpi_tg);
