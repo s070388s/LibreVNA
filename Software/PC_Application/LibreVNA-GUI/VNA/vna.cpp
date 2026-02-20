@@ -804,17 +804,26 @@ void VNA::initializeDevice()
     QSettings s;
     auto key = "DefaultCalibration"+window->getDevice()->getSerial();
     if (s.contains(key)) {
-        auto filename = s.value(key).toString();
-        qDebug() << "Attempting to load default calibration file " << filename;
-        if(QFile::exists(filename)) {
-            if(cal.fromFile(filename)) {
-                qDebug() << "Calibration successful from " << filename;
+
+        // only load default calibration once per device. This allows the user to switch to a different calibration
+        // and have it persist across device initializations. Only when connecting to the device again should the
+        // default calibration be loaded
+        if(defaultCalSerial != window->getDevice()->getSerial()) {
+            // we have never loaded the default calibration for this device, do so now
+            auto filename = s.value(key).toString();
+            qDebug() << "Attempting to load default calibration file " << filename;
+            if(QFile::exists(filename)) {
+                if(cal.fromFile(filename)) {
+                    qDebug() << "Calibration successful from " << filename;
+                    defaultCalSerial = window->getDevice()->getSerial();
+                } else {
+                    qDebug() << "Calibration not successfull from: " << filename;
+                }
             } else {
-                qDebug() << "Calibration not successfull from: " << filename;
+                qDebug() << "Calibration file not found: " << filename;
             }
-        } else {
-            qDebug() << "Calibration file not found: " << filename;
         }
+
         removeDefaultCal->setEnabled(true);
     } else {
         qDebug() << "No default calibration file set for this device";
@@ -833,6 +842,8 @@ void VNA::initializeDevice()
 void VNA::deviceDisconnected()
 {
     defaultCalMenu->setEnabled(false);
+    qDebug() << "disconnected";
+    defaultCalSerial.clear();
     emit sweepStopped();
 }
 
@@ -884,6 +895,7 @@ nlohmann::json VNA::toJSON()
     sweep["power"] = power;
     sweep["points"] = settings.npoints;
     sweep["IFBW"] = settings.bandwidth;
+    sweep["dwellTime"] = settings.dwellTime;
     sweep["averages"] = averages;
     j["sweep"] = sweep;
 
@@ -922,6 +934,7 @@ void VNA::fromJSON(nlohmann::json j)
         // restore sweep settings, keep current value as default in case of missing entry
         SetPoints(sweep.value("points", settings.npoints));
         SetIFBandwidth(sweep.value("IFBW", settings.bandwidth));
+        SetDwellTime(sweep.value("dwellTime", settings.dwellTime));
         SetAveraging(sweep.value("averages", averages));
         if(sweep.contains("frequency")) {
             auto freq = sweep["frequency"];
@@ -1560,6 +1573,17 @@ void VNA::SetupSCPI()
         }
     }, [=](QStringList) -> QString {
         return QString::number(settings.bandwidth);
+    }));
+    scpi_acq->add(new SCPICommand("DWELLtime", [=](QStringList params) -> QString {
+        double newval;
+        if(!SCPI::paramToDouble(params, 0, newval)) {
+            return SCPI::getResultName(SCPI::Result::Error);
+        } else {
+            SetDwellTime(newval);
+            return SCPI::getResultName(SCPI::Result::Empty);
+        }
+    }, [=](QStringList) -> QString {
+        return QString::number(settings.dwellTime);
     }));
     scpi_acq->add(new SCPICommand("POINTS", [=](QStringList params) -> QString {
         unsigned long long newval;
