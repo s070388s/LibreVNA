@@ -343,7 +343,16 @@ void HW::getDeviceStatus(Protocol::DeviceStatus *status, bool updateEvenWhenBusy
 
 		// read PLL temperatures
 		uint8_t tempSource, tempLO;
-		GetTemps(&tempSource, &tempLO);
+		// Enable PLL chips for temperature reading
+		bool srcEn = FPGA::IsEnabled(FPGA::Periphery::SourceChip);
+		bool LOEn = FPGA::IsEnabled(FPGA::Periphery::LO1Chip);
+		FPGA::Enable(FPGA::Periphery::SourceChip);
+		FPGA::Enable(FPGA::Periphery::LO1Chip);
+		HW::GetTemps(&tempSource, &tempLO);
+		// restore PLL state
+		FPGA::Enable(FPGA::Periphery::SourceChip, srcEn);
+		FPGA::Enable(FPGA::Periphery::LO1Chip, LOEn);
+
 		LOG_INFO("PLL temperatures: %u/%u", tempSource, tempLO);
 		// Read ADC min/max
 		auto limits = FPGA::GetADCLimits();
@@ -489,17 +498,9 @@ void HW::updateDeviceStatus() {
 		if(HAL_GetTick() - last_update >= 1000) {
 			last_update = HAL_GetTick();
 			HW::Ref::update();
-			Protocol::PacketInfo packet;
+			Protocol::PacketInfo packet = {};
 			packet.type = Protocol::PacketType::DeviceStatus;
-			// Enable PLL chips for temperature reading
-			bool srcEn = FPGA::IsEnabled(FPGA::Periphery::SourceChip);
-			bool LOEn = FPGA::IsEnabled(FPGA::Periphery::LO1Chip);
-			FPGA::Enable(FPGA::Periphery::SourceChip);
-			FPGA::Enable(FPGA::Periphery::LO1Chip);
 			HW::getDeviceStatus(&packet.status, true);
-			// restore PLL state
-			FPGA::Enable(FPGA::Periphery::SourceChip, srcEn);
-			FPGA::Enable(FPGA::Periphery::LO1Chip, LOEn);
 			Communication::Send(packet);
 		}
 	}
